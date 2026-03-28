@@ -1,0 +1,33 @@
+# Runs when this directory is the Git repository root (veritas_full_repo).
+# If your repo root is higher up, move this file to `<repo>/.github/workflows/` and set
+# defaults.run.working-directory to the path of this backend folder.
+
+name: Backend tests
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master, develop]
+
+defaults:
+  run:
+    working-directory: backend
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        run: pytest tests/ -q

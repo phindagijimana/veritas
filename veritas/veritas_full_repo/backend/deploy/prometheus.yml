@@ -1,0 +1,8 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: "veritas-backend"
+    static_configs:
+      - targets: ["backend:6000"]
+    metrics_path: /api/v1/metrics
