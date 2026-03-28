@@ -1,0 +1,31 @@
+# Veritas pipeline catalog example: MELD Graph + FreeSurfer/MELD license files (host dir → container /run/secrets).
+# Register via POST /api/v1/pipelines or rely on startup seed `meld-graph-fcd`.
+#
+# Compute node: place license.txt and meld_license.txt under meld_license_host_dir / MELD_LICENSE_HOST_DIR.
+
+name: meld-graph-fcd
+title: MELD Graph FCD (T1w)
+image: docker.io/meldproject/meld_graph:latest
+modality: MRI
+entrypoint: python scripts/new_patient_pipeline/new_pt_pipeline.py
+inputs:
+  - name: bids_t1
+    type: BIDS
+outputs:
+  - name: predictions
+    type: directory
+resources:
+  cpu: 16
+runtime_profile: meld_graph
+atlas_dataset_id: ideas
+plugin:
+  type: meld_graph
+  containers:
+    freesurfer: docker.io/freesurfer/freesurfer:7.4.1
+    meld: docker.io/meldproject/meld_graph:latest
+  secrets:
+    freesurfer_license_file: license.txt
+    meld_license_file: meld_license.txt
+  container_env:
+    FS_LICENSE: /run/secrets/license.txt
+    MELD_LICENSE: /run/secrets/meld_license.txt

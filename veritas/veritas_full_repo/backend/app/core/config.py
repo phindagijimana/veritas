@@ -37,14 +37,15 @@ class Settings(BaseSettings):
     debug: bool = True
     api_v1_prefix: str = "/api/v1"
 
-    database_url: str = "sqlite:///./app.db"
+    database_url: str = "postgresql+psycopg://veritas:veritas@127.0.0.1:5433/veritas_dev"
     # When false, schema must exist (run `alembic upgrade head`). Required false in production.
-    database_auto_create_schema: bool = True
+    database_auto_create_schema: bool = False
     # Demo datasets/requests/HPC seed in main.seed_data(). Never use in production.
     seed_demo_data_on_startup: bool = True
-    redis_url: str = "redis://localhost:5002/0"
-    # When true, /ready pings Redis and POST /jobs/monitor/sweep enqueues RQ work instead of running inline.
+    redis_url: str = "redis://127.0.0.1:6380/0"
+    # When true, /ready pings Redis and POST /jobs/monitor/sweep enqueues Celery work instead of running inline.
     job_queue_enabled: bool = False
+    # Celery queue name (legacy env name RQ_QUEUE_NAME retained for existing deployments)
     rq_queue_name: str = "ai-biomarkers"
     rq_job_timeout_seconds: int = 3600
     rq_retry_max: int = 2
@@ -52,6 +53,8 @@ class Settings(BaseSettings):
     rq_failed_job_ttl_seconds: int = 604800
 
     allowed_origins: list[str] = Field(default_factory=lambda: ["http://localhost:7000"])
+    # Comma-separated hostnames for TrustedHostMiddleware (e.g. api.veritas.example.com,localhost). Empty = disabled.
+    trusted_hosts: str = ""
 
     # --- HPC / Slurm ---
     hpc_mode: Literal["mock", "slurm"] = "mock"
@@ -71,8 +74,22 @@ class Settings(BaseSettings):
     # --- Artifacts & datasets ---
     artifact_root_dir: str = "./var/veritas_artifacts"
     public_artifact_base_url: str = "http://localhost:6000/static"
+    storage_backend: Literal["local", "s3"] = "local"
+    s3_endpoint_url: str = ""
+    s3_access_key: str = ""
+    s3_secret_key: str = ""
+    s3_bucket: str = "veritas"
+    s3_region: str = "us-east-1"
     dataset_root_dir: str = "./sample_data"
     prometheus_enabled: bool = True
+
+    @property
+    def s3_configured(self) -> bool:
+        return self.storage_backend == "s3" and bool(
+            (self.s3_endpoint_url or "").strip()
+            and (self.s3_access_key or "").strip()
+            and (self.s3_secret_key or "").strip()
+        )
 
     # --- Pipeline images ---
     image_validation_mode: str = "local"
@@ -96,6 +113,10 @@ class Settings(BaseSettings):
     pennsieve_base_url: str = "https://api.pennsieve.io"
     pennsieve_timeout_seconds: int = 30
     dataset_staging_root: str = "/scratch/veritas/staging"
+    # MELD Graph pipeline jobs (runtime_profile=meld_graph): host dir with license.txt + meld_license.txt
+    meld_license_host_dir: str = ""
+    # Used when staged_dataset_path is omitted and VERITAS_STAGED_DATASET_PATH is unset (e.g. IDEAS OOD mirror)
+    meld_ideas_default_staging_path: str = "/ood/share/datasets/ideas"
     atlas_stage_script_name: str = "stage_dataset.sh"
     atlas_stage_env_filename: str = "atlas_stage.env"
     atlas_monitor_poll_seconds: int = 30
@@ -145,6 +166,13 @@ def get_settings() -> Settings:
     return Settings()
 
 
+def trusted_hosts_list(settings: Settings) -> list[str] | None:
+    raw = (settings.trusted_hosts or "").strip()
+    if not raw:
+        return None
+    return [part.strip() for part in raw.split(",") if part.strip()]
+
+
 def validate_production_settings(settings: Settings) -> None:
     """
     Fail fast when APP_ENV=production and unsafe defaults are still in place.
@@ -183,6 +211,18 @@ def validate_production_settings(settings: Settings) -> None:
         problems.append(
             "ATLAS_API_CLIENT_SECRET must be set to a real credential (not a placeholder) when APP_ENV=production"
         )
+
+    if settings.atlas_integration_mode == "live":
+        url = (settings.atlas_api_base_url or "").strip().lower()
+        if "example.org" in url or "atlas.example" in url:
+            problems.append(
+                "ATLAS_API_BASE_URL must point to a real Atlas when ATLAS_INTEGRATION_MODE=live in production "
+                "(replace atlas.example.org / example.org with your deployment URL)"
+            )
+
+    for origin in settings.allowed_origins:
+        if (origin or "").strip() == "*":
+            problems.append("ALLOWED_ORIGINS must not be '*' in production; list explicit HTTPS origins")
 
     if problems:
         detail = "; ".join(problems)

@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.models.enums import JobStatus, ReportStatus, RequestStatus
 from app.models.job import Job
+from app.models.pipeline import Pipeline
 from app.models.report import Report
 from app.models.request import EvaluationRequest
 from app.schemas.hpc import SlurmJobSubmitRequest
@@ -90,9 +91,24 @@ class JobService:
             request.report_status = ReportStatus.preparing.value
             db.flush()
 
+        rp = (payload.runtime_profile or "generic").strip().lower()
+        if rp == "meld_graph" and not (payload.meld_subject_id or "").strip():
+            raise ValueError("meld_subject_id is required when runtime_profile=meld_graph")
+
+        pipeline_yaml: str | None = None
+        name_ref = (payload.pipeline_name or "").strip()
+        if name_ref:
+            row = db.query(Pipeline).filter(Pipeline.name == name_ref).first()
+            if row:
+                pipeline_yaml = row.yaml_definition
+        if pipeline_yaml is None:
+            row = db.query(Pipeline).filter(Pipeline.image == payload.pipeline).first()
+            if row:
+                pipeline_yaml = row.yaml_definition
+
         scheduler = HPCSchedulerService()
         connection = HPCConnectionService.get_active_connection(db)
-        result = scheduler.submit(connection, request.request_code, payload)
+        result = scheduler.submit(connection, request.request_code, payload, pipeline_yaml=pipeline_yaml)
 
         resources = f"{payload.resources.gpu} GPU • {payload.resources.cpu} CPU • {payload.resources.memory_gb} GB RAM"
         job = Job(

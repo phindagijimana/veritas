@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import DateTime, String, Text, func
+from sqlalchemy import DateTime, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -29,3 +29,6 @@ class StagingSession(Base):
     transfer_status: Mapped[str] = mapped_column(String(32), default="ready", server_default="ready")
     transfer_log: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     manifest_files_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    last_attempt_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    pennsieve_export_job_id: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)

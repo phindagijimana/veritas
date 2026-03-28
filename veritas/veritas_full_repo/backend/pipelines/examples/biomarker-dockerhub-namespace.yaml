@@ -1,0 +1,28 @@
+# Example: your code packaged as Docker, pushed to Docker Hub (namespace shown as phindagijimana321).
+# The `image` line is what Veritas passes to Slurm/docker — it must match what you pushed.
+
+name: my-biomarker-pipeline
+title: Custom biomarker (Docker)
+image: docker.io/phindagijimana321/my-biomarker:v1
+modality: MRI
+entrypoint: python /app/run.py --input /input --output /output
+inputs:
+  - name: study_input
+    type: directory
+outputs:
+  - name: metrics
+    type: json
+  - name: predictions
+    type: directory
+  - name: summary_pdf
+    type: pdf
+resources:
+  cpu: 8
+# Optional: what we tell the user / attach in notifications (align with files under job artifacts).
+reports:
+  - name: benchmark_report
+    type: pdf
+    description: Primary PDF sent to the requester
+  - name: metrics_json
+    type: json
+    description: Machine-readable scores for the leaderboard

@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# Veritas platform API — repo helper (use ./platform from repo root)
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VERITAS_DIR="$ROOT/veritas/veritas_full_repo/backend"
+
+_py() {
+  if [[ -x "$VERITAS_DIR/.venv/bin/python" ]]; then
+    echo "$VERITAS_DIR/.venv/bin/python"
+  else
+    echo "python3"
+  fi
+}
+
+usage() {
+  cat <<'EOF'
+Veritas platform (veritas/veritas_full_repo/backend)
+
+  ./platform venv              Create .venv and pip install -e .
+  ./platform install           pip install -e . (uses .venv if present)
+  ./platform start [args]      python -m app serve — default port 6000
+  ./platform worker [args]     Celery worker (app.workers.celery_worker)
+  ./platform migrate           alembic upgrade head
+  ./platform test [args]       pytest
+  ./platform shell             Python REPL with app importable
+
+Environment: VERITAS_HOST, VERITAS_PORT, DATABASE_URL (see backend/app/core/config.py)
+
+Examples:
+  ./platform install && ./platform start
+  ./platform start --port 6000 --reload
+EOF
+}
+
+cmd="${1:-}"
+shift || true
+
+case "$cmd" in
+  ""|-h|--help|help)
+    usage
+    ;;
+  venv)
+    python3 -m venv "$VERITAS_DIR/.venv"
+    "$VERITAS_DIR/.venv/bin/pip" install -U pip
+    (cd "$VERITAS_DIR" && "$VERITAS_DIR/.venv/bin/pip" install -e ".")
+    echo "Created $VERITAS_DIR/.venv — source $VERITAS_DIR/.venv/bin/activate"
+    ;;
+  install)
+    PY="$(_py)"
+    "$PY" -m pip install -U pip
+    (cd "$VERITAS_DIR" && "$PY" -m pip install -e ".")
+    ;;
+  start)
+    cd "$VERITAS_DIR"
+    exec "$(_py)" -m app serve "$@"
+    ;;
+  worker)
+    cd "$VERITAS_DIR"
+    exec "$(_py)" -m app.workers.celery_worker "$@"
+    ;;
+  migrate)
+    cd "$VERITAS_DIR"
+    exec "$(_py)" -m alembic upgrade head "$@"
+    ;;
+  test)
+    cd "$VERITAS_DIR"
+    exec "$(_py)" -m pytest "$@"
+    ;;
+  shell)
+    cd "$VERITAS_DIR"
+    exec "$(_py)" -i -c "import app; print('import app OK')"
+    ;;
+  *)
+    echo "Unknown command: $cmd" >&2
+    usage >&2
+    exit 1
+    ;;
+esac

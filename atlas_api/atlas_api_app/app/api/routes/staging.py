@@ -110,8 +110,7 @@ async def veritas_request_staging(
     )
     db.add(session)
     db.flush()
-    await hydrate_staging_after_request(db, session, row, settings)
-    db.commit()
+    await hydrate_staging_after_request(db, session, row, settings, principal)
     db.refresh(session)
 
     return {"data": _veritas_staging_response_payload(session)}

@@ -1,0 +1,34 @@
+# MELD Graph — same service shape as upstream compose.yml, but license files live in the
+# validator repo root (license.txt = FreeSurfer, meld_license.txt = MELD).
+# Usage (from validator repo root):
+#   export VALIDATOR_ROOT="$(pwd)"
+#   export DOCKER_USER="$(id -u):$(id -g)"
+#   docker compose -f scripts/meld-compose.validator.yml run meld_graph pytest
+#
+# https://github.com/MELDProject/meld_graph/blob/main/compose.yml
+
+services:
+  meld_graph:
+    image: docker.io/meldproject/meld_graph:latest
+    platform: "linux/amd64"
+    volumes:
+      - ${VALIDATOR_ROOT}/meld_docker_data:/data
+    environment:
+      - FS_LICENSE=/run/secrets/license.txt
+      - MELD_LICENSE=/run/secrets/meld_license.txt
+    secrets:
+      - license.txt
+      - meld_license.txt
+    user: $DOCKER_USER
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+              count: 0
+
+secrets:
+  license.txt:
+    file: ${VALIDATOR_ROOT}/license.txt
+  meld_license.txt:
+    file: ${VALIDATOR_ROOT}/meld_license.txt

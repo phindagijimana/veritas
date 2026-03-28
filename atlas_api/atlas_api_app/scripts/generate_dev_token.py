@@ -1,27 +1,11 @@
-import argparse
-import jwt
-from app.core.config import get_settings
+"""Backward-compatible wrapper; prefer `atlas-api dev-token --sub ...`."""
 
+from __future__ import annotations
 
-def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--sub", required=True)
-    parser.add_argument("--roles", default="researcher")
-    args = parser.parse_args()
+import sys
 
-    settings = get_settings()
-    token = jwt.encode(
-        {
-            "sub": args.sub,
-            "roles": [r.strip() for r in args.roles.split(",") if r.strip()],
-            "iss": settings.jwt_issuer,
-            "aud": settings.jwt_audience,
-        },
-        settings.dev_bearer_secret,
-        algorithm="HS256",
-    )
-    print(token)
-
+from app.cli import main
 
 if __name__ == "__main__":
+    sys.argv = ["atlas-api", "dev-token", *sys.argv[1:]]
     main()

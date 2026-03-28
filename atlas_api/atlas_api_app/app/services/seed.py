@@ -8,6 +8,40 @@ from app.models.dataset import AtlasDataset
 from app.models.dataset_grant import DatasetPermissionGrant
 
 DEMO_DATASETS: list[dict] = [
+    # --- Epilepsy cohorts with data already on OOD: IDEAS (open) + CIDUR_BIDS (hospital clinical, protected) ---
+    # Primary home: Pennsieve; secondary: OOD path where full copies already exist for staging/compute.
+    # IDEAS: open epilepsy; Atlas lists publicly so pipelines can attach without a grant.
+    {
+        "dataset_id": "ideas",
+        "name": "IDEAS (epilepsy — open cohort, OOD + Pennsieve)",
+        "visibility": "public",
+        "access_class": "training",
+        "storage_provider": "pennsieve",
+        "canonical_source": "pennsieve",
+        "download_url": None,
+        "staging_allowed": True,
+        "allowed_compute_targets": ["URMC_HPC", "OOD_HPC", "REMOTE_SERVER"],
+        "pennsieve_package_id": None,
+        "secondary_storage_provider": "ood_hpc",
+        "secondary_canonical_source": "ood_hpc",
+        "secondary_location_ref": "/ood/share/datasets/ideas",
+    },
+    # CIDUR_BIDS: epilepsy hospital clinical BIDS on OOD; same disease domain as IDEAS; Atlas restricts reads/downloads to grants.
+    {
+        "dataset_id": "cidur-bids",
+        "name": "CIDUR BIDS (epilepsy clinical hospital — protected, OOD + Pennsieve)",
+        "visibility": "restricted",
+        "access_class": "validation",
+        "storage_provider": "pennsieve",
+        "canonical_source": "pennsieve",
+        "download_url": None,
+        "staging_allowed": True,
+        "allowed_compute_targets": ["URMC_HPC", "OOD_HPC"],
+        "pennsieve_package_id": None,
+        "secondary_storage_provider": "ood_hpc",
+        "secondary_canonical_source": "ood_hpc",
+        "secondary_location_ref": "/ood/secure/clinical/cidur-bids",
+    },
     {
         "dataset_id": "openneuro-ds1",
         "name": "OpenNeuro DS1",

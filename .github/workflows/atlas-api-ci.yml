@@ -1,0 +1,61 @@
+name: Atlas API CI
+
+on:
+  push:
+    paths:
+      - "atlas_api/atlas_api_app/**"
+      - ".github/workflows/atlas-api-ci.yml"
+  pull_request:
+    paths:
+      - "atlas_api/atlas_api_app/**"
+      - ".github/workflows/atlas-api-ci.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: atlas
+          POSTGRES_PASSWORD: atlas
+          POSTGRES_DB: atlas_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U atlas -d atlas_test"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+
+    defaults:
+      run:
+        working-directory: atlas_api/atlas_api_app
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: atlas_api/atlas_api_app/pyproject.toml
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Alembic upgrade (PostgreSQL)
+        env:
+          ATLAS_DATABASE_URL: postgresql+psycopg2://atlas:atlas@localhost:5432/atlas_test
+          ATLAS_DATABASE_AUTO_CREATE_SCHEMA: "false"
+          ATLAS_SEED_DEMO_DATA_ON_STARTUP: "false"
+        run: python -m alembic upgrade head
+
+      - name: Pytest
+        env:
+          ATLAS_DATABASE_URL: postgresql+psycopg2://atlas:atlas@localhost:5432/atlas_test
+          ATLAS_DATABASE_AUTO_CREATE_SCHEMA: "false"
+          ATLAS_SEED_DEMO_DATA_ON_STARTUP: "true"
+        run: python -m pytest tests/ -q --tb=short

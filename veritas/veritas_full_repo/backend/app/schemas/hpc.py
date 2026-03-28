@@ -52,6 +52,15 @@ class SlurmJobSubmitRequest(BaseModel):
     dataset: str
     partition: str = "gpu"
     resources: SlurmResourcesPayload
+    # Optional: resolve Veritas Pipeline.yaml_definition (plugin secrets) by catalog name; else match by pipeline image.
+    pipeline_name: str | None = None
+    # --- MELD Graph (Atlas / IDEAS via Veritas staging) ---
+    # When runtime_profile=meld_graph, pipeline should be the MELD image, e.g. meldproject/meld_graph:latest
+    # Data: VERITAS_STAGED_DATASET_PATH on the compute node (from Atlas staging) or staged_dataset_path below.
+    runtime_profile: str = "generic"  # generic | meld_graph
+    meld_subject_id: str | None = None  # BIDS subject id, e.g. sub-01 or 01 (sub- prefix added if missing)
+    meld_session: str | None = None  # BIDS session folder without "ses-" (e.g. preop, 2WK); null = no session
+    staged_dataset_path: str | None = None  # Optional explicit BIDS root; else $VERITAS_STAGED_DATASET_PATH or default IDEAS path from settings
 
 
 class SlurmResourcesConfig(BaseModel):

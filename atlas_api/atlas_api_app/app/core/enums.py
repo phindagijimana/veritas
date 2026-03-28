@@ -14,8 +14,12 @@ class DatasetAccessClass(str, Enum):
 
 
 class StorageProvider(str, Enum):
+    """Where the canonical dataset bytes live or are first resolved."""
+
     PENNSIEVE = "pennsieve"
     URMC_HPC = "urmc_hpc"
+    # Out-of-domain / institution HPC (e.g. national OOD facility); staging still uses allowed_compute_targets.
+    OOD_HPC = "ood_hpc"
 
 
 class PrincipalType(str, Enum):

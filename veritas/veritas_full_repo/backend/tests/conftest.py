@@ -1,16 +1,38 @@
+"""Tests default to PostgreSQL (see backend README). Set VERITAS_USE_SQLITE_TESTS=1 for SQLite without Docker."""
+
+from __future__ import annotations
+
 import os
+import subprocess
+import sys
+import tempfile
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
-# Ensure app config reads a test sqlite DB before importing app/session modules.
-TEST_DB_PATH = Path(__file__).resolve().parent / "test_step5.db"
-os.environ["DATABASE_URL"] = f"sqlite:///{TEST_DB_PATH.as_posix()}"
-os.environ["HPC_MODE"] = "mock"
+_ROOT = Path(__file__).resolve().parents[1]
+
+_USE_SQLITE = os.environ.get("VERITAS_USE_SQLITE_TESTS", "").lower() in ("1", "true", "yes")
+
+if _USE_SQLITE:
+    _fd, _SQLITE_PATH = tempfile.mkstemp(suffix="veritas_test.db")
+    os.close(_fd)
+    os.environ["DATABASE_URL"] = f"sqlite:///{_SQLITE_PATH}"
+    os.environ["DATABASE_AUTO_CREATE_SCHEMA"] = "true"
+else:
+    os.environ.setdefault(
+        "DATABASE_URL",
+        "postgresql+psycopg://veritas:veritas@127.0.0.1:5433/veritas_test",
+    )
+    os.environ.setdefault("DATABASE_AUTO_CREATE_SCHEMA", "false")
+
+os.environ["SEED_DEMO_DATA_ON_STARTUP"] = "false"
+os.environ.setdefault("HPC_MODE", "mock")
 os.environ.setdefault("APP_ENV", "development")
+os.environ.setdefault("CELERY_TASK_ALWAYS_EAGER", "true")
 
 from app.core.config import get_settings
 
@@ -22,12 +44,26 @@ from app.main import app
 from app.models import Dataset, EvaluationRequest, HPCConnection, Pipeline, Report
 from app.models.enums import ReportStatus, RequestStatus
 
-TEST_ENGINE = create_engine(
-    f"sqlite:///{TEST_DB_PATH.as_posix()}",
+if _USE_SQLITE:
+    TEST_ENGINE = create_engine(
+        os.environ["DATABASE_URL"],
+        future=True,
+        connect_args={"check_same_thread": False},
+    )
+else:
+    TEST_ENGINE = create_engine(
+        os.environ["DATABASE_URL"],
+        future=True,
+        pool_pre_ping=True,
+    )
+
+TestingSessionLocal = sessionmaker(
+    bind=TEST_ENGINE,
+    autoflush=False,
+    autocommit=False,
     future=True,
-    connect_args={"check_same_thread": False},
+    class_=Session,
 )
-TestingSessionLocal = sessionmaker(bind=TEST_ENGINE, autoflush=False, autocommit=False, future=True, class_=Session)
 
 
 def override_get_db():
@@ -45,6 +81,18 @@ app.dependency_overrides[get_db] = override_get_db
 def reset_cached_settings_after_each_test():
     yield
     get_settings.cache_clear()
+
+
+def _clear_all_rows(engine) -> None:
+    url = os.environ.get("DATABASE_URL", "")
+    with engine.begin() as conn:
+        if url.startswith("sqlite"):
+            for table in reversed(Base.metadata.sorted_tables):
+                conn.execute(text(f"DELETE FROM {table.name}"))
+        else:
+            names = ", ".join(f'"{t.name}"' for t in Base.metadata.sorted_tables)
+            if names:
+                conn.execute(text(f"TRUNCATE TABLE {names} RESTART IDENTITY CASCADE"))
 
 
 def seed_test_data(db: Session) -> None:
@@ -116,7 +164,6 @@ def seed_test_data(db: Session) -> None:
         report_status=ReportStatus.pending.value,
         admin_note="Awaiting prep",
     )
-    # Isolated from REQ-2003 (mutated by job-flow tests) for phase transition tests.
     req_phase_tests = EvaluationRequest(
         request_code="REQ-2090",
         description="State machine tests only",
@@ -152,10 +199,19 @@ def seed_test_data(db: Session) -> None:
 
 
 @pytest.fixture(scope="session", autouse=True)
-def setup_database():
-    if TEST_DB_PATH.exists():
-        TEST_DB_PATH.unlink()
-    Base.metadata.create_all(bind=TEST_ENGINE)
+def setup_database(request: pytest.FixtureRequest):
+    if not _USE_SQLITE:
+        subprocess.run(
+            [sys.executable, "-m", "alembic", "upgrade", "head"],
+            cwd=_ROOT,
+            check=True,
+            env=os.environ.copy(),
+        )
+    else:
+        Base.metadata.create_all(bind=TEST_ENGINE)
+
+    _clear_all_rows(TEST_ENGINE)
+
     db = TestingSessionLocal()
     try:
         seed_test_data(db)
@@ -163,8 +219,11 @@ def setup_database():
         db.close()
     yield
     TEST_ENGINE.dispose()
-    if TEST_DB_PATH.exists():
-        TEST_DB_PATH.unlink()
+    if _USE_SQLITE:
+        try:
+            os.unlink(_SQLITE_PATH)
+        except OSError:
+            pass
 
 
 @pytest.fixture()

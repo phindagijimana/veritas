@@ -32,9 +32,23 @@ class HPCSchedulerService:
         self.adapter = get_hpc_adapter()
         self.runner = PipelineRunnerService()
 
-    def submit(self, connection: HPCConnection | None, request_code: str, payload: SlurmJobSubmitRequest) -> SchedulerJobBundle:
+    def submit(
+        self,
+        connection: HPCConnection | None,
+        request_code: str,
+        payload: SlurmJobSubmitRequest,
+        *,
+        pipeline_yaml: str | None = None,
+    ) -> SchedulerJobBundle:
         runtime = SlurmService.build_runtime_layout(job_name=payload.job_name, request_code=request_code, remote_root=self.settings.slurm_remote_workdir)
-        plan = self.runner.build_plan(request_code=request_code, job_name=payload.job_name, pipeline=payload.pipeline, dataset=payload.dataset)
+        plan = self.runner.build_plan(
+            request_code=request_code,
+            job_name=payload.job_name,
+            pipeline=payload.pipeline,
+            dataset=payload.dataset,
+            job_payload=payload,
+            pipeline_yaml=pipeline_yaml,
+        )
         config = SlurmResourcesConfig(
             job_name=payload.job_name,
             partition=payload.partition,

@@ -2,4 +2,4 @@
 set -euo pipefail
 mkdir -p /app/var/veritas_artifacts
 python -m app.workers.runner &
-exec rq worker ai-biomarkers
+exec celery -A app.celery_app worker --loglevel=info -Q "${RQ_QUEUE_NAME:-ai-biomarkers}"

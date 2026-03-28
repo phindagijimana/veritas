@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from botocore.exceptions import ClientError
 from fastapi import APIRouter, HTTPException, Response, status
 from redis import Redis
 from redis.exceptions import RedisError
@@ -37,6 +38,25 @@ def readiness() -> dict:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=f"Redis unavailable (JOB_QUEUE_ENABLED=true): {exc}",
+            ) from exc
+
+    if settings.s3_configured:
+        import boto3
+
+        s3 = boto3.client(
+            "s3",
+            endpoint_url=(settings.s3_endpoint_url or None),
+            aws_access_key_id=settings.s3_access_key,
+            aws_secret_access_key=settings.s3_secret_key,
+            region_name=settings.s3_region or "us-east-1",
+        )
+        try:
+            s3.head_bucket(Bucket=settings.s3_bucket)
+            checks["s3"] = "ok"
+        except ClientError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"S3/MinIO unavailable (storage configured): {exc}",
             ) from exc
 
     return {"status": "ready", **checks}

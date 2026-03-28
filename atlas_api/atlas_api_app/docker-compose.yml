@@ -1,0 +1,47 @@
+# Local stack: Postgres + Redis + MinIO (S3-compatible) for Atlas API.
+# Usage: docker compose up -d
+# Defaults: see .env.example (ATLAS_REDIS_URL, ATLAS_S3_*). Create bucket "atlas" in MinIO console.
+
+services:
+  redis:
+    image: docker.io/library/redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
+
+  minio:
+    image: docker.io/minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: atlasminio
+      MINIO_ROOT_PASSWORD: atlasminio_secret
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - atlas_minio_data:/data
+
+  postgres:
+    image: docker.io/library/postgres:15-alpine
+    environment:
+      POSTGRES_USER: atlas
+      POSTGRES_PASSWORD: atlas
+      POSTGRES_DB: atlas_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - atlas_pg_data:/var/lib/postgresql/data
+      - ./docker/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U atlas -d atlas_dev"]
+      interval: 3s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  atlas_pg_data:
+  atlas_minio_data:

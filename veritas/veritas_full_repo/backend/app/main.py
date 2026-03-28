@@ -12,9 +12,12 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.api.router import api_router
-from app.core.config import get_settings, validate_production_settings
+from app.api.routes.health import readiness as readiness_probe
+from app.core.config import get_settings, trusted_hosts_list, validate_production_settings
+from app.core.security_headers import SecurityHeadersMiddleware
 from app.core.auth_rate_limit import AuthRateLimitMiddleware
 from app.core.rate_limit import limiter
 from app.core.request_limits import LimitRequestBodySizeMiddleware
@@ -24,6 +27,43 @@ from app.db.session import SessionLocal, engine
 from app.models import Dataset, EvaluationRequest, HPCConnection, Job, Pipeline, Report, ReportArtifact
 
 settings = get_settings()
+
+# Synced to DB on every startup via _ensure_meld_and_ideas_catalog (existing rows get updated).
+_MELD_GRAPH_FCD_YAML = """name: meld-graph-fcd
+title: MELD Graph FCD (T1w)
+image: docker.io/meldproject/meld_graph:latest
+modality: MRI
+entrypoint: python scripts/new_patient_pipeline/new_pt_pipeline.py
+inputs:
+  - name: bids_t1
+    type: BIDS
+outputs:
+  - name: predictions
+    type: directory
+resources:
+  cpu: 16
+runtime_profile: meld_graph
+atlas_dataset_id: ideas
+plugin:
+  type: meld_graph
+  # Separate FreeSurfer vs MELD images (Slurm script runs the MELD image; FS image is declared for recon / ops).
+  containers:
+    freesurfer: docker.io/freesurfer/freesurfer:7.4.1
+    meld: docker.io/meldproject/meld_graph:latest
+  secrets:
+    freesurfer_license_file: license.txt
+    meld_license_file: meld_license.txt
+  container_env:
+    FS_LICENSE: /run/secrets/license.txt
+    MELD_LICENSE: /run/secrets/meld_license.txt
+"""
+_MELD_GRAPH_FCD_TITLE = "MELD Graph — FCD lesion (T1w)"
+_MELD_GRAPH_FCD_IMAGE = "docker.io/meldproject/meld_graph:latest"
+_MELD_GRAPH_FCD_DESCRIPTION = (
+    "MELD Project FCD classifier. Use with Atlas dataset `ideas`. "
+    "Slurm submit: runtime_profile=meld_graph, meld_subject_id=sub-..., dataset ideas. "
+    "YAML includes plugin.type meld_graph (FreeSurfer + MELD license files)."
+)
 
 
 class MetricsMiddleware(BaseHTTPMiddleware):
@@ -112,6 +152,58 @@ def seed_data() -> None:
         db.close()
 
 
+def _ensure_meld_and_ideas_catalog(db) -> None:
+    """
+    Register MELD Graph + IDEAS (Atlas) on Veritas for all users (idempotent).
+    GET /api/v1/pipelines and dataset catalog include these; Atlas dataset_id remains `ideas`.
+
+    Always refreshes `meld-graph-fcd` from `_MELD_GRAPH_FCD_YAML` so upgrades pick up the MELD plugin block.
+    """
+    meld = db.query(Pipeline).filter(Pipeline.name == "meld-graph-fcd").first()
+    if meld:
+        meld.title = _MELD_GRAPH_FCD_TITLE
+        meld.image = _MELD_GRAPH_FCD_IMAGE
+        meld.modality = "MRI"
+        meld.description = _MELD_GRAPH_FCD_DESCRIPTION
+        meld.yaml_definition = _MELD_GRAPH_FCD_YAML
+    else:
+        db.add(
+            Pipeline(
+                name="meld-graph-fcd",
+                title=_MELD_GRAPH_FCD_TITLE,
+                image=_MELD_GRAPH_FCD_IMAGE,
+                modality="MRI",
+                description=_MELD_GRAPH_FCD_DESCRIPTION,
+                yaml_definition=_MELD_GRAPH_FCD_YAML,
+            )
+        )
+    db.commit()
+
+    if not db.query(Dataset).filter(Dataset.code == "IDEAS").first():
+        db.add(
+            Dataset(
+                code="IDEAS",
+                name="ideas",
+                disease_group="Epilepsy",
+                collection_name="IDEAS",
+                version="v1",
+                modality="MRI",
+                source="Atlas / OOD",
+                subject_count=0,
+                hpc_root_path="/ood/share/datasets/ideas",
+                manifest_path="",
+                label_schema="BIDS",
+                qc_status="Validated",
+                benchmark_enabled=True,
+                description=(
+                    "Atlas dataset_id `ideas` (IDEAS epilepsy cohort, public). "
+                    "Same id for Veritas jobs and POST /atlas/staging/request."
+                ),
+            )
+        )
+        db.commit()
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     cfg = get_settings()
@@ -120,6 +212,11 @@ async def lifespan(_: FastAPI):
         Base.metadata.create_all(bind=engine)
     if cfg.seed_demo_data_on_startup:
         seed_data()
+    db = SessionLocal()
+    try:
+        _ensure_meld_and_ideas_catalog(db)
+    finally:
+        db.close()
     if cfg.hpc_validate_on_startup and cfg.hpc_mode == "slurm":
         from app.services.hpc_adapter import get_hpc_adapter
         from app.services.hpc_service import HPCConnectionService
@@ -152,8 +249,27 @@ app.add_middleware(
 app.add_middleware(LimitRequestBodySizeMiddleware)
 app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(AuthRateLimitMiddleware)
+app.add_middleware(
+    SecurityHeadersMiddleware,
+    production=(settings.app_env or "").strip().lower() == "production",
+)
+_th = trusted_hosts_list(settings)
+if _th:
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=_th)
 app.include_router(api_router, prefix=settings.api_v1_prefix)
 
 
 Path(settings.artifact_root_dir).expanduser().mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(Path(settings.artifact_root_dir).expanduser())), name="static")
+
+
+@app.get("/health", include_in_schema=False)
+def kubernetes_liveness() -> dict:
+    """Load balancers / Kubernetes probes (no /api/v1 prefix). Same semantics as GET /api/v1/health."""
+    return {"status": "ok"}
+
+
+@app.get("/ready", include_in_schema=False)
+def kubernetes_readiness():
+    """Readiness: DB (+ Redis/S3 when configured). Same as GET /api/v1/ready."""
+    return readiness_probe()

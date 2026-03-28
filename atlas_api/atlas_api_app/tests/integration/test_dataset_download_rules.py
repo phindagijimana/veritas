@@ -43,10 +43,19 @@ def test_dataset_listing_marks_only_public_as_downloadable() -> None:
     assert response.status_code == 200
     body = response.json()
     items = {item["dataset_id"]: item for item in body["items"]}
-    assert body["count"] == 2
+    assert body["count"] == 3
     assert "internal-hs-private" not in items
     assert items["openneuro-ds1"]["downloadable"] is True
     assert items["openneuro-ds1"]["storage_provider"] == "pennsieve"
+    assert items["ideas"]["downloadable"] is True
+    assert items["ideas"]["storage_provider"] == "pennsieve"
+    assert len(items["ideas"]["storage_homes"]) == 2
+    assert items["ideas"]["storage_homes"][0]["role"] == "primary"
+    assert items["ideas"]["storage_homes"][0]["storage_provider"] == "pennsieve"
+    assert items["ideas"]["storage_homes"][1]["role"] == "secondary"
+    assert items["ideas"]["storage_homes"][1]["storage_provider"] == "ood_hpc"
+    assert len(items["openneuro-ds1"]["storage_homes"]) == 1
+    assert "cidur-bids" not in items
     assert items["clinical-mri-a"]["downloadable"] is False
     assert items["clinical-mri-a"]["staging_allowed"] is True
     assert items["clinical-mri-a"]["access_class"] == "validation"
@@ -59,7 +68,7 @@ def test_internal_api_key_lists_all_datasets() -> None:
             headers={"X-Internal-Api-Key": "test-internal-key"},
         )
     assert response.status_code == 200
-    assert response.json()["count"] == 3
+    assert response.json()["count"] == 5
 
 
 def test_validation_dataset_stage_authorized_for_urmc_hpc() -> None:

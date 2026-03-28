@@ -34,7 +34,10 @@ def submit_slurm_job(request_id: str, payload: SlurmJobSubmitRequest, db: Sessio
     try:
         return {"data": JobService.submit_slurm_job(db, request_id, payload)}
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        msg = str(exc)
+        if msg == "Request not found":
+            raise HTTPException(status_code=404, detail=msg) from exc
+        raise HTTPException(status_code=400, detail=msg) from exc
 
 
 @router.post("/{job_id}/sync", response_model=JobItemResponse)

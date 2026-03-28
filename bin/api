@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# Atlas API — repo helper (use ./api from repo root)
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ATLAS_DIR="$ROOT/atlas_api/atlas_api_app"
+
+_py() {
+  if [[ -x "$ATLAS_DIR/.venv/bin/python" ]]; then
+    echo "$ATLAS_DIR/.venv/bin/python"
+  else
+    echo "python3"
+  fi
+}
+
+usage() {
+  cat <<'EOF'
+Atlas API (atlas_api/atlas_api_app)
+
+  ./api venv              Create .venv and pip install -e ".[dev]"
+  ./api install           pip install -e ".[dev]" (uses .venv if present)
+  ./api start [args]      python -m app serve — default port 8000
+  ./api dev-token [args]  HS256 dev JWT for local auth
+  ./api migrate           alembic upgrade head
+  ./api test [args]       pytest
+  ./api shell             Python REPL with app importable
+
+Environment: ATLAS_HOST, ATLAS_PORT, ATLAS_DATABASE_URL (see atlas_api_app/app/core/config.py)
+
+Examples:
+  ./api install && ./api start
+  ./api start --port 9000 --reload
+EOF
+}
+
+cmd="${1:-}"
+shift || true
+
+case "$cmd" in
+  ""|-h|--help|help)
+    usage
+    ;;
+  venv)
+    python3 -m venv "$ATLAS_DIR/.venv"
+    "$ATLAS_DIR/.venv/bin/pip" install -U pip
+    (cd "$ATLAS_DIR" && "$ATLAS_DIR/.venv/bin/pip" install -e ".[dev]")
+    echo "Created $ATLAS_DIR/.venv — source $ATLAS_DIR/.venv/bin/activate"
+    ;;
+  install)
+    PY="$(_py)"
+    "$PY" -m pip install -U pip
+    (cd "$ATLAS_DIR" && "$PY" -m pip install -e ".[dev]")
+    ;;
+  start)
+    cd "$ATLAS_DIR"
+    exec "$(_py)" -m app serve "$@"
+    ;;
+  dev-token)
+    cd "$ATLAS_DIR"
+    exec "$(_py)" -m app dev-token "$@"
+    ;;
+  migrate)
+    cd "$ATLAS_DIR"
+    exec "$(_py)" -m alembic upgrade head "$@"
+    ;;
+  test)
+    cd "$ATLAS_DIR"
+    exec "$(_py)" -m pytest "$@"
+    ;;
+  shell)
+    cd "$ATLAS_DIR"
+    exec "$(_py)" -i -c "import app; print('app package:', app.__file__)"
+    ;;
+  *)
+    echo "Unknown command: $cmd" >&2
+    usage >&2
+    exit 1
+    ;;
+esac

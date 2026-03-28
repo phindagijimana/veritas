@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.core.enums import DatasetVisibility, StorageProvider
+from app.core.enums import DatasetVisibility
 from app.db.session import get_db
 from app.integrations.pennsieve import PennsieveClient
 from app.models.dataset import AtlasDataset
@@ -35,6 +35,7 @@ def _serialize_dataset(row: AtlasDataset) -> dict[str, Any]:
         "access_class": row.access_class,
         "storage_provider": row.storage_provider,
         "canonical_source": row.canonical_source,
+        "storage_homes": row.storage_homes(),
         "downloadable": visibility == DatasetVisibility.PUBLIC.value,
         "staging_allowed": bool(row.staging_allowed),
         "allowed_compute_targets": list(row.allowed_compute_targets or []),
@@ -108,7 +109,7 @@ async def download_dataset(
         "dataset_id": row.dataset_id,
         "downloadable": True,
         "download_url": download_url,
-        "storage_provider": StorageProvider.PENNSIEVE.value,
+        "storage_provider": row.storage_provider,
         "requested_by": principal.principal_id,
         "pennsieve_resolved": pennsieve_resolved,
     }
@@ -135,7 +136,7 @@ async def stage_dataset(
         "status": "authorized",
         "mode": mode,
         "canonical_source": row.canonical_source,
-        "storage_provider": StorageProvider.PENNSIEVE.value,
+        "storage_provider": row.storage_provider,
         "compute_target": payload.compute_target,
         "requested_by": payload.requested_by or principal.principal_id,
     }

@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "veritas-backend"
+version = "0.1.0"
+description = "Veritas validation / HPC / Atlas integration API"
+requires-python = ">=3.9"
+readme = "README.md"
+dynamic = ["dependencies"]
+
+[project.scripts]
+veritas-api = "app.cli:main"
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: live HTTP to Atlas/Veritas (set ATLAS_LIVE_TEST=1 and URLs)",
+]

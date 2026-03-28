@@ -2,6 +2,7 @@ fastapi==0.116.1
 slowapi==0.1.9
 limits>=4.2,<5
 uvicorn[standard]==0.35.0
+gunicorn>=22.0.0
 sqlalchemy==2.0.43
 alembic==1.16.5
 pydantic==2.11.7
@@ -9,8 +10,10 @@ pydantic-settings==2.10.1
 email-validator>=2.0.0
 psycopg[binary]==3.2.10
 python-multipart==0.0.20
-redis==6.4.0
-rq==2.6.0
+# Celery 5.4 pins redis<6 (broker compatibility)
+redis>=4.5.2,<6
+celery[redis]==5.4.0
+boto3>=1.35.0
 
 paramiko==3.4.0
 

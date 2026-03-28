@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from pathlib import PurePosixPath
 import re
 
@@ -68,8 +69,8 @@ class SlurmService:
                 "echo 'Veritas HPC job started'",
                 f"echo 'Runtime manifest: {runtime_manifest_path}'",
                 "",
-                "# Container runtime execution",
-                f"echo {runtime_command!r} > runtime_command.sh",
+                "# Container runtime execution (base64 avoids quoting issues for multiline MELD scripts)",
+                f"printf '%s' '{base64.b64encode(runtime_command.encode()).decode()}' | base64 -d > runtime_command.sh",
                 "chmod +x runtime_command.sh",
                 "./runtime_command.sh || true",
                 "",

@@ -10,6 +10,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from app.core.config import get_settings
+from app.services.meld_pipeline_plugin import validate_license_basename
 
 try:
     import yaml
@@ -20,6 +21,99 @@ REQUIRED_KEYS = ('name', 'title', 'image', 'modality', 'entrypoint', 'inputs', '
 
 
 class PipelineYamlValidator:
+    @staticmethod
+    def _meld_graph_plugin_checks(parsed: dict[str, Any]) -> list[dict[str, Any]]:
+        """When runtime_profile is meld_graph, require plugin.type and plugin.secrets (FreeSurfer + MELD files)."""
+        rp = str(parsed.get('runtime_profile', '')).strip().lower()
+        plugin = parsed.get('plugin') if isinstance(parsed.get('plugin'), dict) else None
+        plugin_type = str(plugin.get('type', '')).strip().lower() if plugin else ''
+        if rp != 'meld_graph' and plugin_type != 'meld_graph':
+            return []
+
+        if plugin is None or plugin_type != 'meld_graph':
+            return [
+                {
+                    'name': 'meld_plugin_block',
+                    'ok': False,
+                    'detail': 'runtime_profile is meld_graph: add plugin.type: meld_graph and plugin.secrets',
+                }
+            ]
+
+        if plugin_type == 'meld_graph' and rp != 'meld_graph':
+            return [
+                {
+                    'name': 'meld_runtime_profile',
+                    'ok': False,
+                    'detail': 'set runtime_profile: meld_graph to match plugin.type: meld_graph',
+                }
+            ]
+
+        secrets = plugin.get('secrets') if isinstance(plugin.get('secrets'), dict) else None
+        if not secrets:
+            return [
+                {
+                    'name': 'meld_plugin_secrets',
+                    'ok': False,
+                    'detail': 'plugin.secrets must define freesurfer_license_file and meld_license_file',
+                }
+            ]
+
+        fs_raw = str(secrets.get('freesurfer_license_file', '')).strip()
+        meld_raw = str(secrets.get('meld_license_file', '')).strip()
+        fs_ok = validate_license_basename(fs_raw)
+        meld_ok = validate_license_basename(meld_raw)
+        ok = fs_ok and meld_ok
+        detail = 'FreeSurfer + MELD license basenames valid' if ok else 'plugin.secrets: use safe basenames (e.g. license.txt, meld_license.txt)'
+        checks = [{'name': 'meld_plugin_secrets', 'ok': ok, 'detail': detail}]
+
+        containers_raw = plugin.get('containers')
+        if containers_raw is not None:
+            if not isinstance(containers_raw, dict):
+                checks.append(
+                    {
+                        'name': 'meld_containers',
+                        'ok': False,
+                        'detail': 'plugin.containers must be a mapping with freesurfer and meld image refs',
+                    }
+                )
+            else:
+                fs_i = str(containers_raw.get('freesurfer', '') or '').strip()
+                meld_i = str(containers_raw.get('meld', '') or '').strip()
+                ref_ok = lambda s: bool(re.match(r'^[\w./:-]+$', s))  # noqa: E731
+                c_ok = bool(fs_i and meld_i and ref_ok(fs_i) and ref_ok(meld_i))
+                checks.append(
+                    {
+                        'name': 'meld_containers',
+                        'ok': c_ok,
+                        'detail': 'plugin.containers.freesurfer and .meld set' if c_ok else 'set both container image refs',
+                    }
+                )
+
+        return checks
+
+    @staticmethod
+    def _optional_reports_deliverables_checks(parsed: dict[str, Any]) -> list[dict[str, Any]]:
+        """If `reports` is present, it lists user-facing deliverables (PDF/JSON/CSV) sent after the job."""
+        if 'reports' not in parsed:
+            return []
+        reports = parsed.get('reports')
+        if not isinstance(reports, list):
+            return [
+                {
+                    'name': 'reports_structure',
+                    'ok': False,
+                    'detail': 'reports must be a list when present',
+                }
+            ]
+        ok = True
+        detail_ok = 'each item has name (user deliverables)'
+        for item in reports:
+            if not isinstance(item, dict) or not str(item.get('name', '')).strip():
+                ok = False
+                detail_ok = 'each reports[] entry must be an object with name'
+                break
+        return [{'name': 'reports_deliverables', 'ok': ok, 'detail': detail_ok}]
+
     @staticmethod
     def _run_command(command: list[str], timeout: int) -> tuple[bool, str]:
         try:
@@ -175,6 +269,9 @@ class PipelineYamlValidator:
         resources = parsed.get('resources', {}) if isinstance(parsed.get('resources'), dict) else {}
         cpu_ok = isinstance(resources.get('cpu'), int) and resources.get('cpu', 0) > 0
         checks.append({'name': 'resource_cpu', 'ok': cpu_ok, 'detail': f"cpu={resources.get('cpu')}" if cpu_ok else 'resources.cpu must be a positive integer'})
+
+        checks.extend(PipelineYamlValidator._meld_graph_plugin_checks(parsed))
+        checks.extend(PipelineYamlValidator._optional_reports_deliverables_checks(parsed))
 
         valid = all(item['ok'] for item in checks)
         return {

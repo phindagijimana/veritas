@@ -127,3 +127,91 @@ class PennsieveClient:
 
         rows = self._extract_file_rows(data)
         return rows if rows else None
+
+    async def fetch_download_manifest(self, package_node_id: str) -> list[dict[str, Any]] | None:
+        """
+        POST /packages/download-manifest — official manifest with paths and sizes (Pennsieve API).
+        Prefer this over GET /packages/{id} heuristics when integration is enabled.
+        """
+        if not self.is_enabled():
+            return None
+        base = self._settings.pennsieve_api_base_url.rstrip("/")
+        url = f"{base}/packages/download-manifest"
+        headers = {
+            "Authorization": f"Bearer {self._settings.pennsieve_api_token.strip()}",
+            "Content-Type": "application/json",
+        }
+        if self._settings.pennsieve_organization_id.strip():
+            headers["X-Pennsieve-Organization-Id"] = self._settings.pennsieve_organization_id.strip()
+        payload = {"nodeIds": [package_node_id]}
+
+        try:
+            async with httpx.AsyncClient(timeout=self._settings.pennsieve_request_timeout_seconds) as client:
+                response = await client.post(url, headers=headers, json=payload)
+        except httpx.HTTPError as exc:
+            logger.warning("Pennsieve download-manifest failed for %s: %s", package_node_id, exc)
+            return None
+
+        if response.status_code != 200:
+            logger.info("download-manifest HTTP %s for %s", response.status_code, package_node_id)
+            return None
+        try:
+            data = response.json()
+        except ValueError:
+            return None
+
+        rows: list[dict[str, Any]] = []
+        entries = data.get("data") if isinstance(data, dict) else None
+        if not isinstance(entries, list):
+            return None
+        for ent in entries:
+            if not isinstance(ent, dict):
+                continue
+            path_parts = ent.get("path")
+            if isinstance(path_parts, list):
+                path_str = "/".join(str(p) for p in path_parts)
+            else:
+                path_str = str(ent.get("fileName") or ent.get("path") or "")
+            if not path_str:
+                continue
+            size = ent.get("size") or 0
+            try:
+                sz = int(size) if size is not None else 0
+            except (TypeError, ValueError):
+                sz = 0
+            rows.append({"path": path_str, "size": sz})
+        return rows if rows else None
+
+    async def export_package_job(self, package_id: str) -> str | None:
+        """
+        PUT /packages/{id}/export — may return async export job metadata (API-specific).
+        Returns a job or export reference string when the response includes one.
+        """
+        if not self.is_enabled():
+            return None
+        base = self._settings.pennsieve_api_base_url.rstrip("/")
+        url = f"{base}/packages/{package_id}/export"
+        headers = {"Authorization": f"Bearer {self._settings.pennsieve_api_token.strip()}"}
+        if self._settings.pennsieve_organization_id.strip():
+            headers["X-Pennsieve-Organization-Id"] = self._settings.pennsieve_organization_id.strip()
+
+        try:
+            async with httpx.AsyncClient(timeout=self._settings.pennsieve_request_timeout_seconds) as client:
+                response = await client.put(url, headers=headers)
+        except httpx.HTTPError as exc:
+            logger.warning("Pennsieve export failed for %s: %s", package_id, exc)
+            return None
+
+        if response.status_code not in (200, 202):
+            return None
+        try:
+            data = response.json()
+        except ValueError:
+            return None
+        if not isinstance(data, dict):
+            return None
+        for key in ("id", "jobId", "exportId", "taskId"):
+            val = data.get(key)
+            if isinstance(val, str) and val:
+                return val
+        return None

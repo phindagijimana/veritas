@@ -1,4 +1,7 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+
+import { fetchHealthLiveness, fetchPipelines } from "./api/veritasClient.js";
+import { isVeritasApiConfigured } from "./config.js";
 
 const COLORS = {
   navy: "#0f2f6b",
@@ -70,12 +73,14 @@ const DATASETS = [
   { name: "Alzheimer Dataset", disease: "Alzheimer", biomarker: "AD", code: "ATLAS-AD-1", version: "v3", subjects: 420, source: "Atlas / Pennsieve", qc: "validated" },
   { name: "TSC Dataset", disease: "TSC", biomarker: "TSC", code: "ATLAS-TSC-1", version: "v1", subjects: 96, source: "Atlas / Pennsieve", qc: "pilot" },
   { name: "Epilepsy Dataset", disease: "Epilepsy", biomarker: "General", code: "ATLAS-EPI-1", version: "v1", subjects: 510, source: "Atlas / Pennsieve", qc: "validated" },
+  { name: "ideas (IDEAS)", disease: "Epilepsy", biomarker: "FCD / MELD", code: "IDEAS", version: "v1", subjects: 0, source: "Atlas (public)", qc: "validated" },
 ];
 
 const REQUESTS = [
   {
     id: "REQ-1042",
     user: "Dr. Allen",
+    requesterEmail: "allen@hospital.org",
     datasets: "HS Dataset",
     pipeline: "registry/org/hsnet:1.0",
     phase: "Processing",
@@ -91,6 +96,7 @@ const REQUESTS = [
   {
     id: "REQ-1043",
     user: "Dr. Rivera",
+    requesterEmail: "rivera@university.edu",
     datasets: "FCD Dataset",
     pipeline: "registry/org/fcdgraph:2.1",
     phase: "Reporting",
@@ -106,6 +112,7 @@ const REQUESTS = [
   {
     id: "REQ-1044",
     user: "Dr. Shah",
+    requesterEmail: "shah@research.org",
     datasets: "Alzheimer Dataset",
     pipeline: "registry/org/ad-biomarker:0.9",
     phase: "Data Prep",
@@ -117,6 +124,22 @@ const REQUESTS = [
     staging: "not_started",
     hiddenTest: "not_started",
     bundle: "—",
+  },
+  {
+    id: "REQ-1045",
+    user: "Dr. Kim",
+    requesterEmail: "kim@neuro.edu",
+    datasets: "ideas (IDEAS)",
+    pipeline: "docker.io/meldproject/meld_graph:latest",
+    phase: "Pipeline Prep",
+    report: "Not Ready",
+    submitted: "2026-03-14 08:00",
+    admin_note: "Veritas catalog: meld-graph-fcd + Atlas dataset_id ideas; staging via POST /atlas/staging/request.",
+    atlasId: "ideas",
+    approval: "approved",
+    staging: "validated",
+    hiddenTest: "not_started",
+    bundle: "EVB-REQ-1045",
   },
 ];
 
@@ -289,11 +312,26 @@ export default function VeritasApp() {
   const [page, setPage] = useState("home");
   const [showHpcModal, setShowHpcModal] = useState(false);
   const [showSlurmModal, setShowSlurmModal] = useState(false);
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [hpcConnected, setHpcConnected] = useState(false);
+  const [reportStatus, setReportStatus] = useState(null);
+  const [requests, setRequests] = useState(REQUESTS);
+  const [selectedRequestId, setSelectedRequestId] = useState(REQUESTS[0].id);
+  const selectedRequest = useMemo(
+    () => requests.find((r) => r.id === selectedRequestId) ?? requests[0],
+    [requests, selectedRequestId],
+  );
   const [selectedDataset, setSelectedDataset] = useState(DATASETS[0].name);
   const [selectedPipeline, setSelectedPipeline] = useState("registry/org/hsnet:1.0");
-  const [selectedRequest, setSelectedRequest] = useState(REQUESTS[0]);
   const [requestForm, setRequestForm] = useState({ dataset: DATASETS[0].name, pipeline: "registry/org/model:1.0", description: "Evaluate hippocampal sclerosis biomarker pipeline." });
-  const [pipelineDraft, setPipelineDraft] = useState({ name: "hs-detector", title: "Hippocampal Sclerosis Detector", image: "registry/org/model:1.0", modality: "MRI", description: "Research-grade lesion detection pipeline for hippocampal sclerosis." });
+  const [pipelineDraft, setPipelineDraft] = useState({
+    name: "my-biomarker",
+    title: "My biomarker pipeline",
+    image: "docker.io/phindagijimana321/my-biomarker:v1",
+    modality: "MRI",
+    entrypoint: "python /app/run.py --input /input --output /output",
+    description: "Built from your Dockerfile, pushed to Docker Hub, then referenced here for Slurm jobs.",
+  });
   const [hpcForm, setHpcForm] = useState({ hostname: "hpc.example.org", username: "researcher", port: "22", key_path: "~/.ssh/id_rsa", notes: "OOD login available" });
   const [slurmForm, setSlurmForm] = useState({
     job_name: "biomarker-eval-job",
@@ -305,8 +343,47 @@ export default function VeritasApp() {
     wall_time: "08:00:00",
     constraint: "a100",
     sbatch_overrides: "#SBATCH --gres=gpu:1\n#SBATCH --cpus-per-task=16\n#SBATCH --mem=64G",
+    dataset: "ideas",
+    pipeline_image: "docker.io/meldproject/meld_graph:latest",
+    pipeline_name: "meld-graph-fcd",
+    runtime_profile: "generic",
+    meld_subject_id: "",
   });
-  const [adminNote, setAdminNote] = useState(selectedRequest.admin_note);
+  const [adminNote, setAdminNote] = useState(REQUESTS[0].admin_note);
+  const [reportForm, setReportForm] = useState({ subject: "", body: "" });
+  const [apiHealth, setApiHealth] = useState(null);
+  const [pipelinesLive, setPipelinesLive] = useState(null);
+
+  useEffect(() => {
+    setAdminNote(selectedRequest.admin_note);
+  }, [selectedRequest]);
+
+  useEffect(() => {
+    if (!isVeritasApiConfigured()) {
+      setApiHealth("off");
+      return;
+    }
+    let cancelled = false;
+    fetchHealthLiveness().then((h) => {
+      if (cancelled) return;
+      setApiHealth(h?.status === "ok" ? "ok" : "down");
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (page !== "pipeline" || !isVeritasApiConfigured()) return;
+    let cancelled = false;
+    fetchPipelines().then((j) => {
+      if (cancelled || !j?.data) return;
+      setPipelinesLive(Array.isArray(j.data) ? j.data : []);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [page]);
   const [atlasApiForm, setAtlasApiForm] = useState({
     full_name: "",
     email: "",
@@ -330,6 +407,32 @@ export default function VeritasApp() {
     [apiInquiries, selectedInquiryId],
   );
   const phaseIndex = USER_PHASES.indexOf(selectedRequest.phase);
+
+  const pipelineYamlPreview = useMemo(() => {
+    const n = pipelineDraft.name || "my-pipeline";
+    return `name: ${n}
+title: ${pipelineDraft.title || n}
+image: ${pipelineDraft.image}
+modality: ${pipelineDraft.modality || "MRI"}
+entrypoint: ${pipelineDraft.entrypoint || "python /app/run.py"}
+inputs:
+  - name: study_input
+    type: directory
+outputs:
+  - name: metrics
+    type: json
+  - name: predictions
+    type: directory
+resources:
+  cpu: 8
+# Optional: user-facing files attached after the job (PDF / JSON / CSV)
+reports:
+  - name: benchmark_report
+    type: pdf
+    description: Sent to the requester with email notification
+  - name: metrics_json
+    type: json`;
+  }, [pipelineDraft]);
 
   const navButton = (item, mobile = false) => {
     const active = page === item.id;
@@ -374,6 +477,26 @@ export default function VeritasApp() {
           </div>
         </div>
       </div>
+
+      {apiHealth === "off" ? (
+        <div className="border-b px-4 py-2 text-center text-xs" style={{ backgroundColor: COLORS.soft, borderColor: COLORS.line, color: COLORS.muted }}>
+          Demo mode: set <code className="rounded bg-white px-1">VITE_VERITAS_API_BASE_URL</code> (e.g.{" "}
+          <code className="rounded bg-white px-1">http://127.0.0.1:6000/api/v1</code>) and rebuild to connect the UI to a live Veritas API.
+        </div>
+      ) : (
+        <div
+          className="border-b px-4 py-2 text-center text-sm"
+          style={{
+            borderColor: COLORS.line,
+            backgroundColor: apiHealth === "ok" ? "#ecfdf3" : apiHealth === "down" ? "#fef2f2" : COLORS.navySoft,
+            color: apiHealth === "ok" ? "#166534" : apiHealth === "down" ? "#b91c1c" : COLORS.text,
+          }}
+        >
+          {apiHealth === null && "Checking Veritas API…"}
+          {apiHealth === "ok" && "Veritas API reachable (production / live backend)."}
+          {apiHealth === "down" && "Veritas API unreachable — check CORS, URL, and that the backend is running."}
+        </div>
+      )}
 
       {page === "home" && (
         <PageShell>
@@ -741,22 +864,64 @@ export default function VeritasApp() {
 
       {page === "pipeline" && (
         <PageShell>
-          <SectionTitle title="Pipeline" subtitle="Create a pipeline plugin using YAML details provided by the user." />
+          <SectionTitle
+            title="Pipeline"
+            subtitle="Package your code as a Docker image, push it to your registry (e.g. docker.io/phindagijimana321/…), then describe it in YAML. The image string is what Veritas runs on Slurm; outputs and optional reports define artifacts for the user."
+          />
           <div className="grid gap-5 xl:grid-cols-12">
             <Card className="p-5 sm:p-6 xl:col-span-5">
-              <h3 className="text-lg font-semibold sm:text-xl" style={{ color: COLORS.text }}>Pipeline Details</h3>
+              <h3 className="text-lg font-semibold sm:text-xl" style={{ color: COLORS.text }}>Pipeline details</h3>
+              <p className="mt-2 text-sm leading-relaxed" style={{ color: COLORS.muted }}>
+                {pipelineDraft.description}
+              </p>
               <div className="mt-5 grid gap-4">
-                <TextField label="Pipeline Name" placeholder="e.g. hippocampal-sclerosis-detector" value={pipelineDraft.name} onChange={(e) => setPipelineDraft({ ...pipelineDraft, name: e.target.value })} />
-                <TextField label="Display Title" placeholder="Hippocampal Sclerosis Detector" value={pipelineDraft.title} onChange={(e) => setPipelineDraft({ ...pipelineDraft, title: e.target.value })} />
+                <TextField label="Pipeline name (YAML name)" placeholder="my-biomarker" value={pipelineDraft.name} onChange={(e) => setPipelineDraft({ ...pipelineDraft, name: e.target.value })} />
+                <TextField label="Display title" placeholder="My biomarker pipeline" value={pipelineDraft.title} onChange={(e) => setPipelineDraft({ ...pipelineDraft, title: e.target.value })} />
+                <TextField
+                  label="Container image (after docker push)"
+                  placeholder="docker.io/phindagijimana321/my-biomarker:v1"
+                  value={pipelineDraft.image}
+                  onChange={(e) => setPipelineDraft({ ...pipelineDraft, image: e.target.value })}
+                  className="font-mono text-xs"
+                />
+                <TextField label="Modality" placeholder="MRI" value={pipelineDraft.modality} onChange={(e) => setPipelineDraft({ ...pipelineDraft, modality: e.target.value })} />
+                <TextField
+                  label="Entrypoint / command"
+                  placeholder="python /app/run.py --input /input --output /output"
+                  value={pipelineDraft.entrypoint}
+                  onChange={(e) => setPipelineDraft({ ...pipelineDraft, entrypoint: e.target.value })}
+                  className="font-mono text-xs"
+                />
               </div>
             </Card>
             <Card className="p-5 sm:p-6 xl:col-span-7">
-              <h3 className="text-lg font-semibold sm:text-xl" style={{ color: COLORS.text }}>YAML Plugin Definition</h3>
+              <h3 className="text-lg font-semibold sm:text-xl" style={{ color: COLORS.text }}>YAML plugin definition (preview)</h3>
+              <p className="mt-2 text-sm" style={{ color: COLORS.muted }}>
+                Register via <code className="rounded bg-slate-100 px-1 text-xs">POST /api/v1/pipelines</code> after validating. Job submit uses the same <code className="rounded bg-slate-100 px-1 text-xs">image</code> string.
+              </p>
               <div className="mt-5 rounded-2xl border p-4" style={{ borderColor: COLORS.line, backgroundColor: COLORS.soft }}>
-                <pre className="overflow-x-auto whitespace-pre-wrap text-sm leading-6" style={{ color: COLORS.text }}>{`name: ${pipelineDraft.name}
-image: ${pipelineDraft.image}
-modality: ${pipelineDraft.modality}`}</pre>
+                <pre className="overflow-x-auto whitespace-pre-wrap text-sm leading-6 font-mono" style={{ color: COLORS.text }}>{pipelineYamlPreview}</pre>
               </div>
+              {pipelinesLive && pipelinesLive.length > 0 ? (
+                <div className="mt-6">
+                  <h4 className="text-sm font-semibold uppercase tracking-wide" style={{ color: COLORS.muted }}>
+                    Live catalog (GET /pipelines)
+                  </h4>
+                  <ul className="mt-3 space-y-2 text-sm" style={{ color: COLORS.text }}>
+                    {pipelinesLive.slice(0, 12).map((p) => (
+                      <li key={p.name || p.id} className="rounded-xl border px-3 py-2" style={{ borderColor: COLORS.line }}>
+                        <span className="font-medium" style={{ color: COLORS.navy }}>{p.name}</span>
+                        {p.title ? <span className="text-slate-600"> — {p.title}</span> : null}
+                        {p.image ? (
+                          <div className="mt-1 font-mono text-xs" style={{ color: COLORS.muted }}>
+                            {p.image}
+                          </div>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
             </Card>
           </div>
         </PageShell>
@@ -800,22 +965,201 @@ modality: ${pipelineDraft.modality}`}</pre>
 
       {page === "admin" && (
         <PageShell>
-          <SectionTitle title="Veritas admin" subtitle="Triage validation requests, monitor HPC execution, and publish reports." />
+          <SectionTitle
+            title="Veritas admin"
+            subtitle="Connect to HPC, pick a submitted evaluation request, launch Slurm jobs with resources, and deliver reports to requesters. (Demo UI — wire to POST /api/v1/jobs/submit/{request_id} and HPC APIs in production.)"
+          />
+          {reportStatus ? (
+            <div className="mb-5 rounded-2xl border px-4 py-3 text-sm" style={{ borderColor: "#bbf7d0", backgroundColor: "#ecfdf3", color: "#166534" }}>
+              {reportStatus}
+            </div>
+          ) : null}
           <div className="grid gap-5 xl:grid-cols-12 items-stretch">
-            <Card className="p-5 xl:col-span-7">
-              <h3 className="text-lg font-semibold" style={{ color: COLORS.text }}>HPC Connection</h3>
-              <div className="mt-3 rounded-2xl border p-4" style={{ borderColor: COLORS.line, backgroundColor: COLORS.navySoft }}>
-                <div className="mt-4 grid grid-cols-3 gap-2">
+            <Card className="p-5 xl:col-span-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-lg font-semibold" style={{ color: COLORS.text }}>HPC connection</h3>
+                  <p className="mt-1 text-sm" style={{ color: COLORS.muted }}>SSH details match Veritas HPC settings.</p>
+                </div>
+                <span
+                  className="shrink-0 rounded-full border px-2.5 py-1 text-xs font-medium"
+                  style={{
+                    borderColor: hpcConnected ? "#bbf7d0" : COLORS.line,
+                    backgroundColor: hpcConnected ? "#ecfdf3" : COLORS.soft,
+                    color: hpcConnected ? "#166534" : COLORS.muted,
+                  }}
+                >
+                  {hpcConnected ? "Connected" : "Not connected"}
+                </span>
+              </div>
+              <div className="mt-4 rounded-2xl border p-4" style={{ borderColor: COLORS.line, backgroundColor: COLORS.navySoft }}>
+                <div className="grid grid-cols-3 gap-2">
                   <SmallStat value={2} label="Queued" />
                   <SmallStat value={1} label="Running" />
-                  <SmallStat value={3} label="GPU Free" />
+                  <SmallStat value={3} label="GPU free" />
                 </div>
               </div>
+              {hpcConnected ? (
+                <p className="mt-4 text-sm leading-relaxed" style={{ color: COLORS.muted }}>
+                  <span className="font-medium" style={{ color: COLORS.text }}>{hpcForm.username}@{hpcForm.hostname}</span>
+                  <span> · port {hpcForm.port}</span>
+                </p>
+              ) : (
+                <p className="mt-4 text-sm" style={{ color: COLORS.muted }}>Configure SSH to validate keys and show live queue stats.</p>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowSlurmModal(false);
+                  setShowReportModal(false);
+                  setShowHpcModal(true);
+                }}
+                className="mt-5 w-full rounded-full px-5 py-3 text-sm font-medium text-white"
+                style={{ backgroundColor: COLORS.navy }}
+              >
+                {hpcConnected ? "Edit HPC connection" : "Connect to HPC"}
+              </button>
             </Card>
-            <Card className="p-5 xl:col-span-5">
-              <h3 className="text-lg font-semibold" style={{ color: COLORS.text }}>Report Delivery</h3>
-              <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                {["PDF", "JSON", "CSV"].map((file) => <button key={file} className="rounded-2xl border px-4 py-3 text-sm" style={{ borderColor: COLORS.line, color: COLORS.text }}>{file}</button>)}
+
+            <Card className="overflow-hidden xl:col-span-8">
+              <div className="border-b px-5 py-4" style={{ borderColor: COLORS.line, backgroundColor: COLORS.navySoft }}>
+                <h3 className="text-lg font-semibold" style={{ color: COLORS.text }}>Submitted requests</h3>
+                <p className="mt-1 text-sm" style={{ color: COLORS.muted }}>Choose a request to attach Slurm jobs and reports.</p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[720px] text-left text-sm">
+                  <thead style={{ backgroundColor: "#fff", color: COLORS.text }}>
+                    <tr>
+                      {["Request", "Requester", "Dataset", "Phase", "Report"].map((h) => (
+                        <th key={h} className="border-b px-4 py-3 font-medium" style={{ borderColor: COLORS.line }}>
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {requests.map((row, idx) => {
+                      const active = selectedRequestId === row.id;
+                      return (
+                        <tr
+                          key={row.id}
+                          onClick={() => setSelectedRequestId(row.id)}
+                          className={idx < requests.length - 1 ? "border-b" : ""}
+                          style={{
+                            borderColor: COLORS.line,
+                            cursor: "pointer",
+                            backgroundColor: active ? "#eff6ff" : undefined,
+                          }}
+                        >
+                          <td className="px-4 py-3 font-mono text-xs" style={{ color: COLORS.navy }}>
+                            {row.id}
+                          </td>
+                          <td className="px-4 py-3" style={{ color: COLORS.text }}>
+                            {row.user}
+                            <div className="text-xs" style={{ color: COLORS.muted }}>
+                              {row.requesterEmail}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3" style={{ color: COLORS.muted }}>
+                            {row.datasets}
+                          </td>
+                          <td className="px-4 py-3" style={{ color: COLORS.text }}>
+                            {row.phase}
+                          </td>
+                          <td className="px-4 py-3">
+                            <span
+                              className="rounded-full border px-2 py-0.5 text-xs font-medium"
+                              style={{
+                                borderColor: COLORS.line,
+                                backgroundColor: row.report === "Ready" ? "#ecfdf3" : COLORS.soft,
+                                color: row.report === "Ready" ? "#166534" : COLORS.muted,
+                              }}
+                            >
+                              {row.report}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+
+            <Card className="p-5 sm:p-6 xl:col-span-12">
+              <div className="grid gap-8 lg:grid-cols-2">
+                <div>
+                  <h3 className="text-lg font-semibold" style={{ color: COLORS.text }}>
+                    Selected request · {selectedRequest.id}
+                  </h3>
+                  <p className="mt-2 text-sm" style={{ color: COLORS.muted }}>
+                    Pipeline <code className="rounded bg-slate-100 px-1 text-xs">{selectedRequest.pipeline}</code>
+                  </p>
+                  <TextField
+                    label="Internal admin note"
+                    textarea
+                    className="mt-4 min-h-[100px]"
+                    placeholder="Notes visible to operators…"
+                    value={adminNote}
+                    onChange={(e) => setAdminNote(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setRequests((prev) =>
+                        prev.map((r) => (r.id === selectedRequest.id ? { ...r, admin_note: adminNote } : r)),
+                      )
+                    }
+                    className="mt-3 rounded-full border px-4 py-2 text-sm font-medium"
+                    style={{ borderColor: COLORS.line, color: COLORS.navy }}
+                  >
+                    Save note
+                  </button>
+                </div>
+                <div className="flex flex-col justify-center gap-3 rounded-2xl border p-5" style={{ borderColor: COLORS.line, backgroundColor: COLORS.soft }}>
+                  <p className="text-sm font-medium" style={{ color: COLORS.text }}>Actions</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const isMeld = selectedRequest.pipeline.includes("meld");
+                      setSlurmForm((f) => ({
+                        ...f,
+                        job_name: `eval-${selectedRequest.id.toLowerCase().replace(/\s/g, "")}`,
+                        dataset: selectedRequest.atlasId === "ideas" ? "ideas" : "dataset",
+                        pipeline_image: selectedRequest.pipeline,
+                        pipeline_name: isMeld ? "meld-graph-fcd" : "",
+                        runtime_profile: isMeld ? "meld_graph" : "generic",
+                        meld_subject_id: isMeld ? "sub-01" : "",
+                      }));
+                      setShowHpcModal(false);
+                      setShowReportModal(false);
+                      setShowSlurmModal(true);
+                    }}
+                    className="rounded-full px-5 py-3 text-sm font-medium text-white"
+                    style={{ backgroundColor: COLORS.navy }}
+                  >
+                    Submit job (Slurm resources)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setReportForm({
+                        subject: `Veritas validation report — ${selectedRequest.id}`,
+                        body: `Dear ${selectedRequest.user},\n\nYour evaluation request ${selectedRequest.id} is ready. Metrics and PDF are attached in the platform.\n\n— Veritas operations`,
+                      });
+                      setShowHpcModal(false);
+                      setShowSlurmModal(false);
+                      setShowReportModal(true);
+                    }}
+                    className="rounded-full border px-5 py-3 text-sm font-medium"
+                    style={{ borderColor: COLORS.line, color: COLORS.navy }}
+                  >
+                    Send report to requester
+                  </button>
+                  <p className="text-xs leading-relaxed" style={{ color: COLORS.muted }}>
+                    Maps to <code className="rounded bg-white px-1">POST /api/v1/jobs/submit/{"{request_id}"}</code> and report notifications.
+                  </p>
+                </div>
               </div>
             </Card>
           </div>
@@ -824,36 +1168,141 @@ modality: ${pipelineDraft.modality}`}</pre>
 
       {showHpcModal ? (
         <ModalShell
-          title="SSH Connect to HPC"
-          subtitle="Enter SSH connection details for the HPC environment."
+          title="HPC connection (SSH)"
+          subtitle="Same fields as Veritas HPCConnection: hostname, user, key path. Validates on save in production."
           onClose={() => setShowHpcModal(false)}
           footer={
             <>
-              <button onClick={() => setShowHpcModal(false)} className="rounded-full border px-5 py-3 text-sm font-medium" style={{ borderColor: COLORS.line, color: COLORS.navy }}>Cancel</button>
-              <button onClick={() => setShowHpcModal(false)} className="rounded-full px-5 py-3 text-sm font-medium text-white" style={{ backgroundColor: COLORS.navy }}>Connect</button>
+              <button type="button" onClick={() => setShowHpcModal(false)} className="rounded-full border px-5 py-3 text-sm font-medium" style={{ borderColor: COLORS.line, color: COLORS.navy }}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setHpcConnected(true);
+                  setShowHpcModal(false);
+                }}
+                className="rounded-full px-5 py-3 text-sm font-medium text-white"
+                style={{ backgroundColor: COLORS.navy }}
+              >
+                Save & connect
+              </button>
             </>
           }
         >
-          <div className="grid gap-4">
-            <TextField label="Hostname" placeholder="e.g. hpc.example.org" value={hpcForm.hostname} onChange={(e) => setHpcForm({ ...hpcForm, hostname: e.target.value })} />
+          <div className="grid gap-4 sm:grid-cols-2">
+            <TextField label="Hostname" placeholder="e.g. hpc.cluster.org" value={hpcForm.hostname} onChange={(e) => setHpcForm({ ...hpcForm, hostname: e.target.value })} />
+            <TextField label="Username" placeholder="researcher" value={hpcForm.username} onChange={(e) => setHpcForm({ ...hpcForm, username: e.target.value })} />
+            <TextField label="Port" placeholder="22" value={hpcForm.port} onChange={(e) => setHpcForm({ ...hpcForm, port: e.target.value })} />
+            <TextField label="SSH private key path" placeholder="~/.ssh/id_rsa" value={hpcForm.key_path} onChange={(e) => setHpcForm({ ...hpcForm, key_path: e.target.value })} />
+            <div className="sm:col-span-2">
+              <TextField label="Notes" placeholder="Partition hints, VPN, etc." value={hpcForm.notes} onChange={(e) => setHpcForm({ ...hpcForm, notes: e.target.value })} />
+            </div>
           </div>
         </ModalShell>
       ) : null}
 
       {showSlurmModal ? (
         <ModalShell
-          title="Custom Slurm Resources"
-          subtitle="Adjust compute resources if the default preset is not enough for this job."
+          title="Submit Slurm job"
+          subtitle={`Request ${selectedRequest.id} · ${selectedRequest.user} · maps to POST /api/v1/jobs/submit/${selectedRequest.id}`}
           onClose={() => setShowSlurmModal(false)}
           footer={
             <>
-              <button onClick={() => setShowSlurmModal(false)} className="rounded-full border px-5 py-3 text-sm font-medium" style={{ borderColor: COLORS.line, color: COLORS.navy }}>Use Default</button>
-              <button onClick={() => setShowSlurmModal(false)} className="rounded-full px-5 py-3 text-sm font-medium text-white" style={{ backgroundColor: COLORS.navy }}>Apply and Submit</button>
+              <button type="button" onClick={() => setShowSlurmModal(false)} className="rounded-full border px-5 py-3 text-sm font-medium" style={{ borderColor: COLORS.line, color: COLORS.navy }}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowSlurmModal(false);
+                  setReportStatus(`Job “${slurmForm.job_name}” submitted for ${selectedRequest.id} (demo).`);
+                }}
+                className="rounded-full px-5 py-3 text-sm font-medium text-white"
+                style={{ backgroundColor: COLORS.navy }}
+              >
+                Submit job
+              </button>
             </>
           }
         >
           <div className="grid gap-4 sm:grid-cols-2">
-            <TextField label="GPUs" placeholder="1" value={slurmForm.gpus} onChange={(e) => setSlurmForm({ ...slurmForm, gpus: e.target.value })} />
+            <TextField label="Job name" value={slurmForm.job_name} onChange={(e) => setSlurmForm({ ...slurmForm, job_name: e.target.value })} />
+            <TextField label="Partition" placeholder="gpu" value={slurmForm.partition} onChange={(e) => setSlurmForm({ ...slurmForm, partition: e.target.value })} />
+            <div className="sm:col-span-2">
+              <SelectField
+                label="Resource preset"
+                options={SLURM_PRESETS}
+                value={slurmForm.resources}
+                onChange={(e) => setSlurmForm({ ...slurmForm, resources: e.target.value })}
+              />
+            </div>
+            <TextField label="GPUs" value={slurmForm.gpus} onChange={(e) => setSlurmForm({ ...slurmForm, gpus: e.target.value })} />
+            <TextField label="CPUs" value={slurmForm.cpus} onChange={(e) => setSlurmForm({ ...slurmForm, cpus: e.target.value })} />
+            <TextField label="Memory (GB)" value={slurmForm.memory_gb} onChange={(e) => setSlurmForm({ ...slurmForm, memory_gb: e.target.value })} />
+            <TextField label="Wall time" placeholder="24:00:00" value={slurmForm.wall_time} onChange={(e) => setSlurmForm({ ...slurmForm, wall_time: e.target.value })} />
+            <TextField label="Constraint (optional)" placeholder="a100" value={slurmForm.constraint} onChange={(e) => setSlurmForm({ ...slurmForm, constraint: e.target.value })} />
+            <TextField label="Dataset (job)" value={slurmForm.dataset} onChange={(e) => setSlurmForm({ ...slurmForm, dataset: e.target.value })} />
+            <TextField label="Pipeline image" value={slurmForm.pipeline_image} onChange={(e) => setSlurmForm({ ...slurmForm, pipeline_image: e.target.value })} />
+            <TextField label="Pipeline name (optional)" placeholder="meld-graph-fcd" value={slurmForm.pipeline_name} onChange={(e) => setSlurmForm({ ...slurmForm, pipeline_name: e.target.value })} />
+            <SelectField
+              label="Runtime profile"
+              options={["generic", "meld_graph"]}
+              value={slurmForm.runtime_profile}
+              onChange={(e) => setSlurmForm({ ...slurmForm, runtime_profile: e.target.value })}
+            />
+            {slurmForm.runtime_profile === "meld_graph" ? (
+              <TextField label="MELD subject id" placeholder="sub-01" value={slurmForm.meld_subject_id} onChange={(e) => setSlurmForm({ ...slurmForm, meld_subject_id: e.target.value })} />
+            ) : null}
+            <div className="sm:col-span-2">
+              <TextField
+                label="#SBATCH overrides (optional)"
+                textarea
+                className="min-h-[88px] font-mono text-xs"
+                placeholder="#SBATCH --gres=gpu:1"
+                value={slurmForm.sbatch_overrides}
+                onChange={(e) => setSlurmForm({ ...slurmForm, sbatch_overrides: e.target.value })}
+              />
+            </div>
+          </div>
+        </ModalShell>
+      ) : null}
+
+      {showReportModal ? (
+        <ModalShell
+          title="Send report to requester"
+          subtitle={`To: ${selectedRequest.requesterEmail} · ${selectedRequest.user}`}
+          onClose={() => setShowReportModal(false)}
+          footer={
+            <>
+              <button type="button" onClick={() => setShowReportModal(false)} className="rounded-full border px-5 py-3 text-sm font-medium" style={{ borderColor: COLORS.line, color: COLORS.navy }}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setRequests((prev) =>
+                    prev.map((r) =>
+                      r.id === selectedRequest.id ? { ...r, report: "Ready", admin_note: adminNote } : r,
+                    ),
+                  );
+                  setReportStatus(`Report sent to ${selectedRequest.requesterEmail} for ${selectedRequest.id} (demo).`);
+                  setShowReportModal(false);
+                }}
+                className="rounded-full px-5 py-3 text-sm font-medium text-white"
+                style={{ backgroundColor: COLORS.navy }}
+              >
+                Send report
+              </button>
+            </>
+          }
+        >
+          <div className="grid gap-4">
+            <TextField label="Subject" value={reportForm.subject} onChange={(e) => setReportForm({ ...reportForm, subject: e.target.value })} />
+            <TextField label="Message" textarea className="min-h-[160px]" value={reportForm.body} onChange={(e) => setReportForm({ ...reportForm, body: e.target.value })} />
+            <p className="text-xs" style={{ color: COLORS.muted }}>
+              Production: attach PDF/JSON/CSV artifact URLs from Veritas report storage.
+            </p>
           </div>
         </ModalShell>
       ) : null}

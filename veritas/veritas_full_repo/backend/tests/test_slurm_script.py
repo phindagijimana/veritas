@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+
 from app.schemas.hpc import SlurmResourcesConfig
 from app.services.slurm_service import SlurmService
 
@@ -15,9 +17,10 @@ def test_execution_script_includes_runtime_engine_and_prologue():
         constraint="",
         sbatch_overrides="",
     )
+    runtime_cmd = "apptainer run docker://x"
     script = SlurmService.build_execution_script(
         config=config,
-        runtime_command="apptainer run docker://x",
+        runtime_command=runtime_cmd,
         runtime_manifest_path="/tmp/m.json",
         remote_workdir="/work",
         stdout_path="/work/o.log",
@@ -28,4 +31,7 @@ def test_execution_script_includes_runtime_engine_and_prologue():
     assert "# Veritas runtime_engine=apptainer" in script
     assert "module load apptainer" in script
     assert "export FOO=1" in script
-    assert "apptainer run docker://x" in script
+    assert "base64" in script
+    b64 = base64.b64encode(runtime_cmd.encode()).decode()
+    assert b64 in script
+    assert base64.b64decode(b64).decode() == runtime_cmd

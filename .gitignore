@@ -13,6 +13,7 @@ build/
 *.db
 .venv/
 venv/
+.lock_venv/
 env/
 
 # Env
@@ -36,3 +37,9 @@ atlas_api/atlas_api_app/atlas_api.db
 
 # Veritas local artifacts
 veritas/**/var/
+.veritas_last_e2e.json
+
+# MELD / FreeSurfer licenses (never commit)
+/license.txt
+/meld_license.txt
+meld_docker_data/
