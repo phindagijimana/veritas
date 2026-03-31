@@ -40,7 +40,7 @@ When a user submits **MELD** as the pipeline image and **IDEAS** (Atlas `atlas_d
 
 **Compute node requirements:**
 
-- `VERITAS_STAGED_DATASET_PATH` exported in the job environment after Atlas/Veritas staging (see `DatasetStagingService` / Phase B), **or** a valid `staged_dataset_path` / default IDEAS mirror path.
+- `VERITAS_STAGED_DATASET_PATH` exported in the job environment after Atlas/Veritas staging (see `DatasetStagingService` / Phase B), **or** a valid `staged_dataset_path` / **`MELD_IDEAS_DEFAULT_STAGING_PATH`** in Veritas (`.env`) pointing at your BIDS root (e.g. a local `bids_IDEAS` extract).
 - Directory **`meld_license_host_dir`** in Veritas settings, or **`MELD_LICENSE_HOST_DIR`** on the node, containing **`license.txt`** (FreeSurfer) and **`meld_license.txt`** (MELD).
 
 Veritas generates a **bash** runtime script (T1-only BIDS config, `--fastsurfer`) and embeds it in the Slurm wrapper via **base64** so multiline MELD commands are safe.

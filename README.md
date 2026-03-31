@@ -53,6 +53,17 @@ cd veritas/veritas_full_repo/frontend && npm install && npm run dev
 
 `VITE_VERITAS_API_BASE_URL=/api/v1` uses the Vite dev proxy; ensure the Veritas API is running.
 
+### IDEAS BIDS on your filesystem
+
+Point Veritas at a local **BIDS root** (extracted IDEAS tree) so MELD/Slurm scripts can resolve subjects when no Atlas staging path is set:
+
+```bash
+# veritas/veritas_full_repo/backend/.env
+MELD_IDEAS_DEFAULT_STAGING_PATH=/path/to/bids_IDEAS
+```
+
+For `scripts/meld_prepare_bids_input.py` and `./scripts/test_meld_ideas_smoke.sh`, set **`IDEAS_BIDS_ROOT`** to the same directory (or pass `--bids-root`). See [`docs/MELD_VERITAS_ATLAS.md`](docs/MELD_VERITAS_ATLAS.md).
+
 ---
 
 ## Atlas ↔ Veritas integration
