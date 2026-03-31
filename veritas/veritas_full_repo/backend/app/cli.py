@@ -5,6 +5,16 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from pathlib import Path
+
+
+def _load_dotenv_for_cli() -> None:
+    """Load backend/.env before parsing so VERITAS_HOST / VERITAS_PORT apply to `serve`."""
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return
+    load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 
 def _argv_with_default_serve(argv: list[str]) -> list[str]:
@@ -30,6 +40,7 @@ def _cmd_serve(args: argparse.Namespace) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
+    _load_dotenv_for_cli()
     raw = sys.argv[1:] if argv is None else argv
     parser = argparse.ArgumentParser(prog="veritas-api", description="Veritas validation / Atlas integration API")
     sub = parser.add_subparsers(dest="cmd", required=True)
