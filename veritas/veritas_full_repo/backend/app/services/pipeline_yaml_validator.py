@@ -216,7 +216,7 @@ class PipelineYamlValidator:
             return ok, mode, detail
 
         # local/default: prefer the configured runtime, then registry as a fallback
-        if settings.runtime_engine == 'apptainer':
+        if settings.runtime_engine in ("apptainer", "singularity"):
             ok, detail = PipelineYamlValidator._apptainer_validate(image, timeout)
             if ok:
                 return True, 'apptainer', detail

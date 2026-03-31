@@ -7,16 +7,54 @@ from app.core.config import get_settings
 from app.services.meld_pipeline_plugin import MeldPluginConfig, parse_meld_plugin_config
 
 
+def _engine_kind(engine: str | None) -> str:
+    e = (engine or "docker").strip().lower()
+    if e in ("apptainer", "singularity"):
+        return e
+    return "docker"
+
+
+def _is_oci(engine: str | None) -> bool:
+    return _engine_kind(engine) in ("apptainer", "singularity")
+
+
+def _oci_cli(engine: str | None) -> str:
+    """CLI binary name for generated shell (HPC compute nodes)."""
+    k = _engine_kind(engine)
+    if k == "singularity":
+        return "singularity"
+    if k == "apptainer":
+        return "apptainer"
+    return "docker"
+
+
+def _oci_image_ref(image: str) -> str:
+    """Apptainer/Singularity image argument: docker:// for registry refs, pass-through for URIs and paths."""
+    img = image.strip()
+    if not img:
+        return img
+    if img.startswith(("docker://", "oras://", "shub://", "library://", "instance://")):
+        return img
+    if img.startswith("/"):
+        return img
+    return f"docker://{img}"
+
+
 class ContainerRuntimeService:
     def __init__(self) -> None:
         self.settings = get_settings()
 
     def build_command(self, image: str, dataset_path: str, output_dir: str) -> str:
-        engine = (self.settings.runtime_engine or "docker").lower()
-        if engine == "apptainer":
+        engine = self.settings.runtime_engine
+        ds_q = shlex.quote(dataset_path)
+        out_q = shlex.quote(output_dir)
+        if _is_oci(engine):
+            cli = _oci_cli(engine)
+            ref = _oci_image_ref(image)
+            ref_q = shlex.quote(ref)
             return (
-                f"apptainer run --cleanenv --bind {dataset_path}:/input --bind {output_dir}:/output "
-                f"{image} --input /input --output /output"
+                f"{cli} run --cleanenv --bind {ds_q}:/input --bind {out_q}:/output "
+                f"{ref_q} --input /input --output /output"
             )
         return (
             f"docker run --rm -v {dataset_path}:/input -v {output_dir}:/output "
@@ -46,8 +84,9 @@ class ContainerRuntimeService:
         License files: from `meld_plugin` or parsed from `pipeline_yaml` (`plugin.type: meld_graph`, secrets, container_env).
         """
         plugin = meld_plugin if meld_plugin is not None else parse_meld_plugin_config(pipeline_yaml)
-        engine = (self.settings.runtime_engine or "docker").lower()
+        engine = self.settings.runtime_engine
         exec_image = ((plugin.meld_image or "").strip() or image).strip()
+        oci_ref = _oci_image_ref(exec_image)
         sub = meld_subject_id.strip()
         if not sub.startswith("sub-"):
             sub = f"sub-{sub}"
@@ -117,16 +156,19 @@ class ContainerRuntimeService:
             ]
         )
 
-        if engine == "apptainer":
+        oci_ref_q = shlex.quote(oci_ref)
+
+        if _is_oci(engine):
+            cli = _oci_cli(engine)
             lines.extend(
                 [
-                    "apptainer run --cleanenv \\",
+                    f"{cli} run --cleanenv \\",
                     '  --env FS_LICENSE="$FS_LICENSE_CONTAINER" \\',
                     '  --env MELD_LICENSE="$MELD_LICENSE_CONTAINER" \\',
                     '  -B "$MELD_DATA:/data" \\',
                     '  -B "$LICENSE_DIR/$FS_LICENSE_FILE:$FS_LICENSE_CONTAINER:ro" \\',
                     '  -B "$LICENSE_DIR/$MELD_LICENSE_FILE:$MELD_LICENSE_CONTAINER:ro" \\',
-                    f'  docker://{exec_image} \\',
+                    f"  {oci_ref_q} \\",
                     '  python scripts/new_patient_pipeline/new_pt_pipeline.py -id "$SUB" --fastsurfer',
                 ]
             )

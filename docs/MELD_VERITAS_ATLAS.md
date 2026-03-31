@@ -18,7 +18,7 @@ The catalog pipeline `meld-graph-fcd` stores a **`plugin`** block alongside `run
 - **`plugin.type: meld_graph`** — selects the MELD runtime (BIDS prep + `new_pt_pipeline.py`, license mounts).
 - **`plugin.secrets`** — basenames of **FreeSurfer** (`license.txt`) and **MELD** (`meld_license.txt`) files expected under `meld_license_host_dir` / `$MELD_LICENSE_HOST_DIR` on the compute node.
 - **`plugin.container_env`** — optional; defaults to `/run/secrets/...` paths matching the official MELD image.
-- **`plugin.containers`** — optional but recommended: separate **FreeSurfer** and **MELD** image references (`freesurfer`, `meld`). The generated Slurm script **runs the MELD image** (`docker run` / `apptainer` against `plugin.containers.meld`, or top-level `image` if omitted). It also exports **`FREESURFER_IMAGE`** when set so operators can run recon or preprocessing in the FreeSurfer container before/around the bundled MELD step (`--fastsurfer` inside MELD still uses FS tooling in that image).
+- **`plugin.containers`** — optional but recommended: separate **FreeSurfer** and **MELD** image references (`freesurfer`, `meld`). The generated Slurm script **runs the MELD image** using **`RUNTIME_ENGINE`**: `docker run`, or **`apptainer` / `singularity run`** with **`docker://…`** for registry images (see below). It also exports **`FREESURFER_IMAGE`** when set so operators can run recon or preprocessing in the FreeSurfer container before/around the bundled MELD step (`--fastsurfer` inside MELD still uses FS tooling in that image).
 
 Validate with **`POST /api/v1/pipelines/validate`**. Example file: `veritas/veritas_full_repo/backend/pipelines/examples/meld-graph-fcd.yaml`.
 
@@ -44,6 +44,10 @@ When a user submits **MELD** as the pipeline image and **IDEAS** (Atlas `atlas_d
 - Directory **`meld_license_host_dir`** in Veritas settings, or **`MELD_LICENSE_HOST_DIR`** on the node, containing **`license.txt`** (FreeSurfer) and **`meld_license.txt`** (MELD).
 
 Veritas generates a **bash** runtime script (T1-only BIDS config, `--fastsurfer`) and embeds it in the Slurm wrapper via **base64** so multiline MELD commands are safe.
+
+### `RUNTIME_ENGINE` (Docker vs Apptainer / Singularity on HPC)
+
+Set **`RUNTIME_ENGINE`** in the Veritas API (`backend/.env`) to **`docker`** (default), **`apptainer`**, or **`singularity`**. The first is for nodes with Docker; the latter two generate Slurm scripts that use **`apptainer run`** or **`singularity run`** with **`docker://registry/image:tag`** for OCI images (or an absolute path to a local `.sif`). Pair with **`HPC_JOB_PROLOGUE_SH`** (e.g. `module load apptainer`) as required by your cluster.
 
 Example JSON body:
 

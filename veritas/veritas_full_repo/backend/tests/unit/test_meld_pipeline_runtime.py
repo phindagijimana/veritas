@@ -19,6 +19,43 @@ def _mock_settings(**kwargs):
     return m
 
 
+def test_build_command_singularity_uses_docker_uri():
+    with patch("app.services.container_runtime.get_settings", return_value=_mock_settings(runtime_engine="singularity")):
+        rt = ContainerRuntimeService()
+        cmd = rt.build_command("meldproject/meld_graph:latest", "/data/in", "/data/out")
+    assert "singularity run" in cmd
+    assert "docker://meldproject/meld_graph:latest" in cmd
+
+
+def test_meld_runtime_script_emits_singularity_cli():
+    with patch("app.services.container_runtime.get_settings", return_value=_mock_settings(runtime_engine="singularity")):
+        rt = ContainerRuntimeService()
+        script = rt.build_meld_graph_runtime_script(
+            image="meldproject/meld_graph:latest",
+            meld_data_dir="/tmp/job/meld_docker_data",
+            meld_subject_id="sub-01",
+            meld_session=None,
+            staged_dataset_path="/data/staging/ideas",
+            default_ideas_staging="/ood/share/datasets/ideas",
+        )
+    assert "singularity run --cleanenv" in script
+    assert "docker://meldproject/meld_graph:latest" in script
+
+
+def test_meld_runtime_script_emits_apptainer_cli():
+    with patch("app.services.container_runtime.get_settings", return_value=_mock_settings(runtime_engine="apptainer")):
+        rt = ContainerRuntimeService()
+        script = rt.build_meld_graph_runtime_script(
+            image="meldproject/meld_graph:latest",
+            meld_data_dir="/tmp/m",
+            meld_subject_id="sub-01",
+            meld_session=None,
+            staged_dataset_path="/s",
+            default_ideas_staging="/ood/share/datasets/ideas",
+        )
+    assert "apptainer run --cleanenv" in script
+
+
 def test_meld_runtime_script_contains_staging_and_subject():
     with patch("app.services.container_runtime.get_settings", return_value=_mock_settings()):
         rt = ContainerRuntimeService()

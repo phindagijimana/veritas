@@ -71,7 +71,8 @@ class Settings(BaseSettings):
     slurm_poll_command: str = "squeue -h -j {job_id} -o %T"
     slurm_cancel_command: str = "scancel {job_id}"
     scheduler_sync_enabled: bool = True
-    runtime_engine: str = "docker"
+    # HPC container runtime for generated Slurm scripts: docker | apptainer | singularity (OCI via docker://).
+    runtime_engine: Literal["docker", "apptainer", "singularity"] = "docker"
     job_monitor_interval_seconds: int = 30
 
     # --- Artifacts & datasets ---
@@ -145,6 +146,16 @@ class Settings(BaseSettings):
         if v is None:
             return ""
         return str(v).strip()
+
+    @field_validator("runtime_engine", mode="before")
+    @classmethod
+    def normalize_runtime_engine(cls, v: Any) -> str:
+        if v is None or (isinstance(v, str) and not str(v).strip()):
+            return "docker"
+        s = str(v).strip().lower()
+        if s in ("docker", "apptainer", "singularity"):
+            return s
+        return "docker"
 
     @field_validator("allowed_origins", mode="before")
     @classmethod
