@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.models.hpc_connection import HPCConnection
 from app.schemas.hpc import HPCConnectionConfig, HPCSummary
+from app.core.config import get_settings
 from app.services.hpc_adapter import get_hpc_adapter
 from app.services.ssh_service import SSHService
 
@@ -56,10 +57,12 @@ class HPCConnectionService:
         active = HPCConnectionService.get_active_connection(db)
         adapter = get_hpc_adapter()
         result = adapter.summary(active)
+        settings = get_settings()
         return HPCSummary(
             status="Connected" if active and active.status == "connected" else "Unknown",
             queued=result.queue_count,
             running=result.running_count,
             gpu_free=result.gpu_free,
             active_connection=active,
+            hpc_mode=settings.hpc_mode,
         )

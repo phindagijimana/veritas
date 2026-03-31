@@ -4,7 +4,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.core.security import get_current_user, require_admin
 from app.schemas.hpc import (
     HPCConnectionConfig,
     HPCConnectionListResponse,
@@ -17,7 +16,8 @@ router = APIRouter(prefix="/hpc", tags=["hpc"])
 
 
 @router.get("/summary", response_model=HPCSummaryResponse)
-def hpc_summary(db: Session = Depends(get_db), _=Depends(require_admin)):
+def hpc_summary(db: Session = Depends(get_db)):
+    """Queue counts and active SSH connection for the Veritas operator UI (no admin gate)."""
     return {"data": HPCConnectionService.summary(db)}
 
 

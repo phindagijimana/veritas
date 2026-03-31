@@ -21,4 +21,4 @@ def test_hpc_summary_contract(client):
     response = client.get("/api/v1/hpc/summary")
     assert response.status_code == 200
     summary = response.json()["data"]
-    assert set(summary.keys()) >= {"status", "queued", "running", "gpu_free"}
+    assert set(summary.keys()) >= {"status", "queued", "running", "gpu_free", "hpc_mode"}

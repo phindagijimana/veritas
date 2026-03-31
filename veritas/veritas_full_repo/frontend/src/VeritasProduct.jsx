@@ -1,6 +1,13 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 
-import { fetchPipelines, previewSlurmJob } from "./api/veritasClient.js";
+import {
+  connectHpc,
+  fetchHpcSummary,
+  fetchPipelines,
+  previewSlurmJob,
+  submitSlurmJob,
+  testHpcConnection,
+} from "./api/veritasClient.js";
 import { isVeritasApiConfigured } from "./config.js";
 
 const COLORS = {
@@ -96,6 +103,18 @@ function buildSlurmSubmitPayload(slurmForm) {
     if (sid) payload.meld_subject_id = sid;
   }
   return payload;
+}
+
+function buildHpcConnectPayload(hpcForm) {
+  const port = parseInt(String(hpcForm.port), 10);
+  const kp = (hpcForm.key_path || "").trim();
+  return {
+    hostname: (hpcForm.hostname || "").trim(),
+    username: (hpcForm.username || "").trim(),
+    port: Number.isFinite(port) && port > 0 ? port : 22,
+    key_path: kp || null,
+    notes: (hpcForm.notes || "").trim() || null,
+  };
 }
 
 const DATASETS = [
@@ -344,7 +363,13 @@ export default function VeritasApp() {
   const [showHpcModal, setShowHpcModal] = useState(false);
   const [showSlurmModal, setShowSlurmModal] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
-  const [hpcConnected, setHpcConnected] = useState(false);
+  const [hpcSummary, setHpcSummary] = useState(null);
+  const [hpcSummaryLoading, setHpcSummaryLoading] = useState(false);
+  const [hpcSummaryError, setHpcSummaryError] = useState(null);
+  const [hpcModalBusy, setHpcModalBusy] = useState(false);
+  const [hpcModalMessage, setHpcModalMessage] = useState(null);
+  const [submitJobLoading, setSubmitJobLoading] = useState(false);
+  const [pipelineTemplate, setPipelineTemplate] = useState("meld_graph");
   const [reportStatus, setReportStatus] = useState(null);
   const [requests, setRequests] = useState(REQUESTS);
   const [selectedRequestId, setSelectedRequestId] = useState(REQUESTS[0].id);
@@ -425,7 +450,43 @@ export default function VeritasApp() {
   );
   const phaseIndex = USER_PHASES.indexOf(selectedRequest.phase);
 
+  const activeHpc = useMemo(() => hpcSummary?.active_connection?.status === "connected", [hpcSummary]);
+  const slurmSubmitBlocked = useMemo(() => hpcSummary?.hpc_mode === "slurm" && !activeHpc, [hpcSummary, activeHpc]);
+
   const pipelineYamlPreview = useMemo(() => {
+    if (pipelineTemplate === "meld_graph") {
+      const n = pipelineDraft.name || "meld-graph-fcd";
+      return `# MELD Graph — register via POST /api/v1/pipelines (operators curate YAML after your request).
+# Licenses: host directory with license.txt (FreeSurfer) + meld_license.txt (MELD); set MELD_LICENSE_HOST_DIR on the API/compute nodes.
+# Inputs: BIDS dataset (e.g. IDEAS) staged to the cluster; T1w anat per meld_bids_config.
+# Outputs: lesion predictions and metrics under the job artifact layout.
+name: ${n}
+title: ${pipelineDraft.title || "MELD Graph FCD (T1w)"}
+image: ${pipelineDraft.image || "docker.io/meldproject/meld_graph:latest"}
+modality: MRI
+entrypoint: python scripts/new_patient_pipeline/new_pt_pipeline.py
+inputs:
+  - name: bids_t1
+    type: BIDS
+outputs:
+  - name: predictions
+    type: directory
+resources:
+  cpu: 16
+runtime_profile: meld_graph
+atlas_dataset_id: ideas
+plugin:
+  type: meld_graph
+  containers:
+    freesurfer: docker.io/freesurfer/freesurfer:7.4.1
+    meld: docker.io/meldproject/meld_graph:latest
+  secrets:
+    freesurfer_license_file: license.txt
+    meld_license_file: meld_license.txt
+  container_env:
+    FS_LICENSE: /run/secrets/license.txt
+    MELD_LICENSE: /run/secrets/meld_license.txt`;
+    }
     const n = pipelineDraft.name || "my-pipeline";
     return `name: ${n}
 title: ${pipelineDraft.title || n}
@@ -442,14 +503,40 @@ outputs:
     type: directory
 resources:
   cpu: 8
-# Optional: user-facing files attached after the job (PDF / JSON / CSV)
 reports:
   - name: benchmark_report
     type: pdf
     description: Sent to the requester with email notification
   - name: metrics_json
     type: json`;
-  }, [pipelineDraft]);
+  }, [pipelineDraft, pipelineTemplate]);
+
+  const refreshHpcSummary = useCallback(async () => {
+    if (!isVeritasApiConfigured()) return;
+    setHpcSummaryLoading(true);
+    setHpcSummaryError(null);
+    const res = await fetchHpcSummary();
+    setHpcSummaryLoading(false);
+    if (res.ok) setHpcSummary(res.data);
+    else setHpcSummaryError(res.message);
+  }, []);
+
+  useEffect(() => {
+    if (page !== "admin" || !isVeritasApiConfigured()) return;
+    let cancelled = false;
+    (async () => {
+      setHpcSummaryLoading(true);
+      setHpcSummaryError(null);
+      const res = await fetchHpcSummary();
+      if (cancelled) return;
+      setHpcSummaryLoading(false);
+      if (res.ok) setHpcSummary(res.data);
+      else setHpcSummaryError(res.message);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [page]);
 
   const navButton = (item, mobile = false) => {
     const active = page === item.id;
@@ -833,19 +920,22 @@ reports:
 
       {page === "user" && (
         <PageShell>
-          <SectionTitle title="User Dashboard" subtitle="Submit a request, monitor progress, and access validation results." />
+          <SectionTitle
+            title="User Dashboard"
+            subtitle="Submit your packaged pipeline (container image). For MELD on IDEAS, include the image reference you pushed; operators will attach YAML (inputs, outputs, licenses) and run validation on HPC after you are approved."
+          />
           <div className="grid gap-5 xl:grid-cols-12 items-stretch">
             <Card className="p-5 sm:p-6 xl:col-span-7">
               <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <h3 className="text-lg font-semibold sm:text-xl" style={{ color: COLORS.text }}>Submit Request</h3>
-                  <p className="mt-1 text-sm" style={{ color: COLORS.muted }}>Minimal submission flow for packaged pipelines.</p>
+                  <p className="mt-1 text-sm" style={{ color: COLORS.muted }}>References the Docker/OCI image Veritas will pull on the cluster (Apptainer/Singularity or Docker per site policy).</p>
                 </div>
                 <div className="w-fit rounded-full border px-4 py-2 text-sm" style={{ borderColor: COLORS.line, backgroundColor: COLORS.soft, color: COLORS.text }}>User ▾</div>
               </div>
               <div className="grid gap-4 lg:grid-cols-2">
                 <SelectField label="Dataset" options={DATASETS} value={requestForm.dataset} onChange={(e) => { setRequestForm({ ...requestForm, dataset: e.target.value }); setSelectedDataset(e.target.value); }} className="lg:col-span-2" />
-                <TextField label="Packaged Pipeline" placeholder="registry/org/model:1.0" value={requestForm.pipeline} onChange={(e) => setRequestForm({ ...requestForm, pipeline: e.target.value })} className="lg:col-span-2" />
+                <TextField label="Packaged Pipeline" placeholder="docker.io/meldproject/meld_graph:latest" value={requestForm.pipeline} onChange={(e) => setRequestForm({ ...requestForm, pipeline: e.target.value })} className="lg:col-span-2" />
                 <TextField label="Description" placeholder="Brief purpose / hypothesis" textarea className="min-h-[110px] lg:col-span-2" value={requestForm.description} onChange={(e) => setRequestForm({ ...requestForm, description: e.target.value })} />
               </div>
             </Card>
@@ -855,6 +945,18 @@ reports:
                 {USER_PHASES.map((label, i) => <Pill key={label} label={label} active={i === phaseIndex} complete={i < phaseIndex} />)}
               </div>
             </Card>
+            <Card className="p-5 sm:p-6 xl:col-span-12">
+              <h3 className="text-base font-semibold" style={{ color: COLORS.text }}>MELD Graph (example)</h3>
+              <ul className="mt-3 list-disc space-y-2 pl-5 text-sm leading-relaxed" style={{ color: COLORS.muted }}>
+                <li><span style={{ color: COLORS.text }}>Container:</span> e.g. <code className="rounded bg-slate-100 px-1 text-xs">docker.io/meldproject/meld_graph:latest</code> (plus FreeSurfer sidecar in YAML).</li>
+                <li><span style={{ color: COLORS.text }}>Inputs:</span> BIDS dataset with T1w anatomical; IDEAS cohort uses dataset id <code className="rounded bg-slate-100 px-1 text-xs">ideas</code> and staging to the cluster.</li>
+                <li><span style={{ color: COLORS.text }}>Outputs:</span> predictions and metrics paths defined in YAML; Veritas maps them to reports for the requester.</li>
+                <li><span style={{ color: COLORS.text }}>Licenses:</span> FreeSurfer <code className="rounded bg-slate-100 px-1 text-xs">license.txt</code> and MELD <code className="rounded bg-slate-100 px-1 text-xs">meld_license.txt</code> on the host; mounted read-only in the job script.</li>
+              </ul>
+              <p className="mt-4 text-xs" style={{ color: COLORS.muted }}>
+                Use the Pipeline page to preview operator YAML; after approval, Veritas admin connects to your HPC and submits Slurm jobs against the registered pipeline.
+              </p>
+            </Card>
           </div>
         </PageShell>
       )}
@@ -863,14 +965,27 @@ reports:
         <PageShell>
           <SectionTitle
             title="Pipeline"
-            subtitle="Package your code as a Docker image, push it to your registry (e.g. docker.io/phindagijimana321/…), then describe it in YAML. The image string is what Veritas runs on Slurm; outputs and optional reports define artifacts for the user."
+            subtitle="You submit a container image from the User Dashboard (e.g. MELD Graph for IDEAS). Operators register this YAML in the Veritas catalog (POST /api/v1/pipelines): inputs/outputs, runtime_profile, and for MELD the plugin block with FreeSurfer/MELD license file names and mount paths. Then Veritas admin runs Slurm jobs against that catalog entry."
           />
           <div className="grid gap-5 xl:grid-cols-12">
             <Card className="p-5 sm:p-6 xl:col-span-5">
               <h3 className="text-lg font-semibold sm:text-xl" style={{ color: COLORS.text }}>Pipeline details</h3>
               <p className="mt-2 text-sm leading-relaxed" style={{ color: COLORS.muted }}>
-                {pipelineDraft.description}
+                {pipelineTemplate === "meld_graph"
+                  ? "MELD Graph expects a BIDS T1w layout, FreeSurfer + MELD license files on the host (see plugin.secrets), and optional IDEAS/Atlas staging paths. The generated Slurm script wraps docker run / apptainer with those mounts."
+                  : pipelineDraft.description}
               </p>
+              <div className="mt-4">
+                <SelectField
+                  label="YAML template"
+                  options={[
+                    { name: "MELD Graph (IDEAS / FCD)" },
+                    { name: "Generic biomarker" },
+                  ]}
+                  value={pipelineTemplate === "meld_graph" ? "MELD Graph (IDEAS / FCD)" : "Generic biomarker"}
+                  onChange={(e) => setPipelineTemplate(e.target.value === "MELD Graph (IDEAS / FCD)" ? "meld_graph" : "generic")}
+                />
+              </div>
               <div className="mt-5 grid gap-4">
                 <TextField label="Pipeline name (YAML name)" placeholder="my-biomarker" value={pipelineDraft.name} onChange={(e) => setPipelineDraft({ ...pipelineDraft, name: e.target.value })} />
                 <TextField label="Display title" placeholder="My biomarker pipeline" value={pipelineDraft.title} onChange={(e) => setPipelineDraft({ ...pipelineDraft, title: e.target.value })} />
@@ -892,9 +1007,9 @@ reports:
               </div>
             </Card>
             <Card className="p-5 sm:p-6 xl:col-span-7">
-              <h3 className="text-lg font-semibold sm:text-xl" style={{ color: COLORS.text }}>YAML plugin definition (preview)</h3>
+              <h3 className="text-lg font-semibold sm:text-xl" style={{ color: COLORS.text }}>YAML definition (operator preview)</h3>
               <p className="mt-2 text-sm" style={{ color: COLORS.muted }}>
-                Register via <code className="rounded bg-slate-100 px-1 text-xs">POST /api/v1/pipelines</code> after validating. Job submit uses the same <code className="rounded bg-slate-100 px-1 text-xs">image</code> string.
+                Register with <code className="rounded bg-slate-100 px-1 text-xs">POST /api/v1/pipelines</code>. Jobs resolve <code className="rounded bg-slate-100 px-1 text-xs">pipeline_name</code> or the container <code className="rounded bg-slate-100 px-1 text-xs">image</code> to this YAML (MELD includes <code className="rounded bg-slate-100 px-1 text-xs">plugin</code> for licenses and sidecars).
               </p>
               <div className="mt-5 rounded-2xl border p-4" style={{ borderColor: COLORS.line, backgroundColor: COLORS.soft }}>
                 <pre className="overflow-x-auto whitespace-pre-wrap text-sm leading-6 font-mono" style={{ color: COLORS.text }}>{pipelineYamlPreview}</pre>
@@ -964,7 +1079,7 @@ reports:
         <PageShell>
           <SectionTitle
             title="Veritas admin"
-            subtitle="Connect to HPC, pick a submitted evaluation request, launch Slurm jobs with resources, and deliver reports to requesters. (Demo UI — wire to POST /api/v1/jobs/submit/{request_id} and HPC APIs in production.)"
+            subtitle="Flow: the user submitted a pipeline image from their dashboard; you registered YAML (MELD or generic) in the catalog. Connect to your cluster over SSH, then preview or submit Slurm jobs for the selected evaluation request. Set HPC_MODE=slurm on the API for real sbatch; mock mode still exercises the API without SSH."
           />
           {reportStatus ? (
             <div className="mb-5 rounded-2xl border px-4 py-3 text-sm" style={{ borderColor: "#bbf7d0", backgroundColor: "#ecfdf3", color: "#166534" }}>
@@ -976,45 +1091,55 @@ reports:
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <h3 className="text-lg font-semibold" style={{ color: COLORS.text }}>HPC connection</h3>
-                  <p className="mt-1 text-sm" style={{ color: COLORS.muted }}>SSH details match Veritas HPC settings.</p>
+                  <p className="mt-1 text-sm" style={{ color: COLORS.muted }}>
+                    Uses <code className="rounded bg-white px-1 text-xs">POST /api/v1/hpc/connect</code> (Paramiko SSH). {hpcSummary?.hpc_mode === "slurm" ? "API is in Slurm mode — sbatch runs on this host." : "API is in mock mode — jobs are simulated unless you set HPC_MODE=slurm."}
+                  </p>
                 </div>
                 <span
                   className="shrink-0 rounded-full border px-2.5 py-1 text-xs font-medium"
                   style={{
-                    borderColor: hpcConnected ? "#bbf7d0" : COLORS.line,
-                    backgroundColor: hpcConnected ? "#ecfdf3" : COLORS.soft,
-                    color: hpcConnected ? "#166534" : COLORS.muted,
+                    borderColor: activeHpc ? "#bbf7d0" : COLORS.line,
+                    backgroundColor: activeHpc ? "#ecfdf3" : COLORS.soft,
+                    color: activeHpc ? "#166534" : COLORS.muted,
                   }}
                 >
-                  {hpcConnected ? "Connected" : "Not connected"}
+                  {activeHpc ? "SSH OK" : "Not connected"}
                 </span>
               </div>
+              {hpcSummaryError && isVeritasApiConfigured() ? (
+                <p className="mt-2 text-xs text-amber-800">{hpcSummaryError}</p>
+              ) : null}
               <div className="mt-4 rounded-2xl border p-4" style={{ borderColor: COLORS.line, backgroundColor: COLORS.navySoft }}>
                 <div className="grid grid-cols-3 gap-2">
-                  <SmallStat value={2} label="Queued" />
-                  <SmallStat value={1} label="Running" />
-                  <SmallStat value={3} label="GPU free" />
+                  <SmallStat value={hpcSummaryLoading ? "…" : hpcSummary != null ? hpcSummary.queued : "—"} label="Queued" />
+                  <SmallStat value={hpcSummaryLoading ? "…" : hpcSummary != null ? hpcSummary.running : "—"} label="Running" />
+                  <SmallStat value={hpcSummaryLoading ? "…" : hpcSummary != null ? hpcSummary.gpu_free : "—"} label="GPU free" />
                 </div>
               </div>
-              {hpcConnected ? (
+              {activeHpc && hpcSummary?.active_connection ? (
                 <p className="mt-4 text-sm leading-relaxed" style={{ color: COLORS.muted }}>
-                  <span className="font-medium" style={{ color: COLORS.text }}>{hpcForm.username}@{hpcForm.hostname}</span>
-                  <span> · port {hpcForm.port}</span>
+                  <span className="font-medium" style={{ color: COLORS.text }}>
+                    {hpcSummary.active_connection.username}@{hpcSummary.active_connection.hostname}
+                  </span>
+                  <span> · port {hpcSummary.active_connection.port}</span>
                 </p>
               ) : (
-                <p className="mt-4 text-sm" style={{ color: COLORS.muted }}>Configure SSH to validate keys and show live queue stats.</p>
+                <p className="mt-4 text-sm" style={{ color: COLORS.muted }}>
+                  {isVeritasApiConfigured() ? "Open Veritas API URL in VITE_VERITAS_API_BASE_URL, then save SSH below." : "Set VITE_VERITAS_API_BASE_URL (e.g. /api/v1) to load queue stats and connect."}
+                </p>
               )}
               <button
                 type="button"
                 onClick={() => {
                   setShowSlurmModal(false);
                   setShowReportModal(false);
+                  setHpcModalMessage(null);
                   setShowHpcModal(true);
                 }}
                 className="mt-5 w-full rounded-full px-5 py-3 text-sm font-medium text-white"
                 style={{ backgroundColor: COLORS.navy }}
               >
-                {hpcConnected ? "Edit HPC connection" : "Connect to HPC"}
+                {activeHpc ? "Edit HPC connection" : "Connect to HPC"}
               </button>
             </Card>
 
@@ -1133,6 +1258,9 @@ reports:
                       setJobPreview({ loading: false, error: null, data: null });
                       setSlurmPreviewTab("sbatch");
                       setShowSlurmModal(true);
+                      if (isVeritasApiConfigured()) {
+                        refreshHpcSummary();
+                      }
                     }}
                     className="rounded-full px-5 py-3 text-sm font-medium text-white"
                     style={{ backgroundColor: COLORS.navy }}
@@ -1156,8 +1284,8 @@ reports:
                     Send report to requester
                   </button>
                   <p className="text-xs leading-relaxed" style={{ color: COLORS.muted }}>
-                    <code className="rounded bg-white px-1">POST …/jobs/preview/{"{request_id}"}</code> (scripts only) and{" "}
-                    <code className="rounded bg-white px-1">POST …/jobs/submit/{"{request_id}"}</code> when wired; report notifications separately.
+                    <code className="rounded bg-white px-1">POST …/jobs/preview/{"{request_id}"}</code> (dry run) and{" "}
+                    <code className="rounded bg-white px-1">POST …/jobs/submit/{"{request_id}"}</code> (Slurm when HPC_MODE=slurm). Notify the requester when the report is ready.
                   </p>
                 </div>
               </div>
@@ -1169,36 +1297,95 @@ reports:
       {showHpcModal ? (
         <ModalShell
           title="HPC connection (SSH)"
-          subtitle="Same fields as Veritas HPCConnection: hostname, user, key path. Validates on save in production."
-          onClose={() => setShowHpcModal(false)}
+          subtitle="Calls the Veritas API: Test runs SSH only; Save validates SSH and stores this as the active cluster connection for Slurm submit when HPC_MODE=slurm. Leave key path empty to use ssh-agent / default keys on the API host."
+          onClose={() => {
+            setShowHpcModal(false);
+            setHpcModalMessage(null);
+          }}
           footer={
             <>
-              <button type="button" onClick={() => setShowHpcModal(false)} className="rounded-full border px-5 py-3 text-sm font-medium" style={{ borderColor: COLORS.line, color: COLORS.navy }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowHpcModal(false);
+                  setHpcModalMessage(null);
+                }}
+                className="rounded-full border px-5 py-3 text-sm font-medium"
+                style={{ borderColor: COLORS.line, color: COLORS.navy }}
+              >
                 Cancel
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  setHpcConnected(true);
-                  setShowHpcModal(false);
+                disabled={hpcModalBusy || !isVeritasApiConfigured()}
+                onClick={async () => {
+                  if (!isVeritasApiConfigured()) {
+                    setHpcModalMessage({ error: "Set VITE_VERITAS_API_BASE_URL (e.g. /api/v1)." });
+                    return;
+                  }
+                  setHpcModalBusy(true);
+                  setHpcModalMessage(null);
+                  const res = await testHpcConnection(buildHpcConnectPayload(hpcForm));
+                  setHpcModalBusy(false);
+                  if (res.ok) {
+                    setHpcModalMessage({ ok: "SSH test succeeded (not saved)." });
+                  } else {
+                    setHpcModalMessage({ error: res.message });
+                  }
                 }}
-                className="rounded-full px-5 py-3 text-sm font-medium text-white"
+                className="rounded-full border px-5 py-3 text-sm font-medium disabled:opacity-50"
+                style={{ borderColor: COLORS.line, color: COLORS.navy }}
+              >
+                {hpcModalBusy ? "Testing…" : "Test SSH"}
+              </button>
+              <button
+                type="button"
+                disabled={hpcModalBusy || !isVeritasApiConfigured()}
+                onClick={async () => {
+                  if (!isVeritasApiConfigured()) {
+                    setHpcModalMessage({ error: "Set VITE_VERITAS_API_BASE_URL (e.g. /api/v1)." });
+                    return;
+                  }
+                  setHpcModalBusy(true);
+                  setHpcModalMessage(null);
+                  const res = await connectHpc(buildHpcConnectPayload(hpcForm));
+                  setHpcModalBusy(false);
+                  if (res.ok) {
+                    await refreshHpcSummary();
+                    setShowHpcModal(false);
+                    setHpcModalMessage(null);
+                    setReportStatus(`HPC connected: ${res.data.username}@${res.data.hostname}`);
+                  } else {
+                    setHpcModalMessage({ error: res.message });
+                  }
+                }}
+                className="rounded-full px-5 py-3 text-sm font-medium text-white disabled:opacity-50"
                 style={{ backgroundColor: COLORS.navy }}
               >
-                Save & connect
+                {hpcModalBusy ? "Connecting…" : "Save & connect"}
               </button>
             </>
           }
         >
           <div className="grid gap-4 sm:grid-cols-2">
-            <TextField label="Hostname" placeholder="e.g. hpc.cluster.org" value={hpcForm.hostname} onChange={(e) => setHpcForm({ ...hpcForm, hostname: e.target.value })} />
+            <TextField label="Hostname" placeholder="e.g. login.hpc.cluster.org" value={hpcForm.hostname} onChange={(e) => setHpcForm({ ...hpcForm, hostname: e.target.value })} />
             <TextField label="Username" placeholder="researcher" value={hpcForm.username} onChange={(e) => setHpcForm({ ...hpcForm, username: e.target.value })} />
             <TextField label="Port" placeholder="22" value={hpcForm.port} onChange={(e) => setHpcForm({ ...hpcForm, port: e.target.value })} />
-            <TextField label="SSH private key path" placeholder="~/.ssh/id_rsa" value={hpcForm.key_path} onChange={(e) => setHpcForm({ ...hpcForm, key_path: e.target.value })} />
+            <TextField label="SSH private key path (optional)" placeholder="~/.ssh/id_ed25519" value={hpcForm.key_path} onChange={(e) => setHpcForm({ ...hpcForm, key_path: e.target.value })} />
             <div className="sm:col-span-2">
-              <TextField label="Notes" placeholder="Partition hints, VPN, etc." value={hpcForm.notes} onChange={(e) => setHpcForm({ ...hpcForm, notes: e.target.value })} />
+              <TextField label="Notes" placeholder="Partition hints, VPN, Apptainer module…" value={hpcForm.notes} onChange={(e) => setHpcForm({ ...hpcForm, notes: e.target.value })} />
             </div>
           </div>
+          {hpcModalMessage?.error ? (
+            <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-900" role="alert">
+              {hpcModalMessage.error}
+            </div>
+          ) : null}
+          {hpcModalMessage?.ok ? (
+            <div className="mt-4 rounded-xl border border-green-200 bg-green-50 p-3 text-sm text-green-900">
+              {hpcModalMessage.ok}
+            </div>
+          ) : null}
         </ModalShell>
       ) : null}
 
@@ -1226,7 +1413,7 @@ reports:
               </button>
               <button
                 type="button"
-                disabled={jobPreview.loading}
+                disabled={jobPreview.loading || submitJobLoading}
                 onClick={async () => {
                   if (!isVeritasApiConfigured()) {
                     setJobPreview({
@@ -1264,19 +1451,64 @@ reports:
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  setShowSlurmModal(false);
+                disabled={submitJobLoading || slurmSubmitBlocked || !isVeritasApiConfigured()}
+                onClick={async () => {
+                  if (!isVeritasApiConfigured()) {
+                    setJobPreview({
+                      loading: false,
+                      error: "Set VITE_VERITAS_API_BASE_URL (e.g. /api/v1 with the Vite proxy).",
+                      data: null,
+                    });
+                    return;
+                  }
+                  if (!slurmForm.job_name.trim() || !slurmForm.pipeline_image.trim() || !slurmForm.dataset.trim()) {
+                    setJobPreview({ loading: false, error: "Job name, pipeline image, and dataset are required.", data: null });
+                    return;
+                  }
+                  if (slurmForm.runtime_profile === "meld_graph" && !slurmForm.meld_subject_id.trim()) {
+                    setJobPreview({
+                      loading: false,
+                      error: "MELD subject id is required when runtime profile is meld_graph.",
+                      data: null,
+                    });
+                    return;
+                  }
+                  if (slurmSubmitBlocked) {
+                    setJobPreview({
+                      loading: false,
+                      error: "Connect to HPC first (API is in HPC_MODE=slurm).",
+                      data: null,
+                    });
+                    return;
+                  }
+                  setSubmitJobLoading(true);
                   setJobPreview({ loading: false, error: null, data: null });
-                  setReportStatus(`Job “${slurmForm.job_name}” submitted for ${selectedRequest.id} (demo UI — wire Submit to POST /api/v1/jobs/submit/${selectedRequest.id}).`);
+                  const res = await submitSlurmJob(selectedRequest.id, buildSlurmSubmitPayload(slurmForm));
+                  setSubmitJobLoading(false);
+                  if (res.ok) {
+                    setShowSlurmModal(false);
+                    setJobPreview({ loading: false, error: null, data: null });
+                    setReportStatus(
+                      `Job submitted for ${selectedRequest.id}: ${res.data.id} · scheduler ${res.data.scheduler_job_id || "—"} · status ${res.data.status}`,
+                    );
+                    await refreshHpcSummary();
+                  } else {
+                    setJobPreview({ loading: false, error: res.message, data: null });
+                  }
                 }}
-                className="rounded-full px-5 py-3 text-sm font-medium text-white"
+                className="rounded-full px-5 py-3 text-sm font-medium text-white disabled:opacity-50"
                 style={{ backgroundColor: COLORS.navy }}
               >
-                Submit job
+                {submitJobLoading ? "Submitting…" : "Submit job"}
               </button>
             </>
           }
         >
+          {slurmSubmitBlocked ? (
+            <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+              The API is in <strong>HPC_MODE=slurm</strong>: connect to your cluster (SSH) from the HPC card before submitting. In <strong>mock</strong> mode, submit works without SSH.
+            </div>
+          ) : null}
           <div className="grid gap-4 sm:grid-cols-2">
             <TextField label="Job name" value={slurmForm.job_name} onChange={(e) => setSlurmForm({ ...slurmForm, job_name: e.target.value })} />
             <TextField label="Partition" placeholder="gpu" value={slurmForm.partition} onChange={(e) => setSlurmForm({ ...slurmForm, partition: e.target.value })} />

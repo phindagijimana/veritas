@@ -34,6 +34,8 @@ class HPCSummary(BaseModel):
     running: int
     gpu_free: int
     active_connection: HPCConnectionRead | None = None
+    # mock = simulated Slurm; slurm = real SSH/sbatch (requires active HPC connection).
+    hpc_mode: str = "mock"
 
 
 class SlurmResourcesPayload(BaseModel):
