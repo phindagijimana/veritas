@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 
-import { fetchHealthLiveness, fetchPipelines } from "./api/veritasClient.js";
+import { fetchPipelines } from "./api/veritasClient.js";
 import { isVeritasApiConfigured } from "./config.js";
 
 const COLORS = {
@@ -351,27 +351,11 @@ export default function VeritasApp() {
   });
   const [adminNote, setAdminNote] = useState(REQUESTS[0].admin_note);
   const [reportForm, setReportForm] = useState({ subject: "", body: "" });
-  const [apiHealth, setApiHealth] = useState(null);
   const [pipelinesLive, setPipelinesLive] = useState(null);
 
   useEffect(() => {
     setAdminNote(selectedRequest.admin_note);
   }, [selectedRequest]);
-
-  useEffect(() => {
-    if (!isVeritasApiConfigured()) {
-      setApiHealth("off");
-      return;
-    }
-    let cancelled = false;
-    fetchHealthLiveness().then((h) => {
-      if (cancelled) return;
-      setApiHealth(h?.status === "ok" ? "ok" : "down");
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     if (page !== "pipeline" || !isVeritasApiConfigured()) return;
@@ -477,29 +461,6 @@ reports:
           </div>
         </div>
       </div>
-
-      {apiHealth === "off" ? (
-        <div className="border-b px-4 py-2 text-center text-xs" style={{ backgroundColor: COLORS.soft, borderColor: COLORS.line, color: COLORS.muted }}>
-          Demo mode: set <code className="rounded bg-white px-1">VITE_VERITAS_API_BASE_URL</code> (dev:{" "}
-          <code className="rounded bg-white px-1">/api/v1</code> via Vite proxy; or{" "}
-          <code className="rounded bg-white px-1">http://127.0.0.1:6000/api/v1</code>) and restart{" "}
-          <code className="rounded bg-white px-1">npm run dev</code>.
-        </div>
-      ) : (
-        <div
-          className="border-b px-4 py-2 text-center text-sm"
-          style={{
-            borderColor: COLORS.line,
-            backgroundColor: apiHealth === "ok" ? "#ecfdf3" : apiHealth === "down" ? "#fef2f2" : COLORS.navySoft,
-            color: apiHealth === "ok" ? "#166534" : apiHealth === "down" ? "#b91c1c" : COLORS.text,
-          }}
-        >
-          {apiHealth === null && "Checking Veritas API…"}
-          {apiHealth === "ok" && "Veritas API reachable (production / live backend)."}
-          {apiHealth === "down" &&
-            "Veritas API unreachable — ensure ./platform start on :6000, VITE_VERITAS_API_BASE_URL in .env.local, and restart npm run dev."}
-        </div>
-      )}
 
       {page === "home" && (
         <PageShell>
