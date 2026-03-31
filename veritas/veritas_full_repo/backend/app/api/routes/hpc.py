@@ -7,6 +7,8 @@ from app.db.session import get_db
 from app.schemas.hpc import (
     HPCConnectionConfig,
     HPCConnectionListResponse,
+    HPCConnectionProbeRead,
+    HPCConnectionProbeResponse,
     HPCConnectionResponse,
     HPCSummaryResponse,
 )
@@ -34,9 +36,21 @@ def connect_hpc(payload: HPCConnectionConfig, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@router.post("/test-connection", response_model=HPCConnectionResponse)
+@router.post("/test-connection", response_model=HPCConnectionProbeResponse)
 def test_hpc_connection(payload: HPCConnectionConfig, db: Session = Depends(get_db)):
     try:
-        return {"data": HPCConnectionService.test_connection(db, payload)}
+        row = HPCConnectionService.test_connection(db, payload)
+        probe = HPCConnectionProbeRead(
+            id=row.id,
+            hostname=row.hostname,
+            username=row.username,
+            port=row.port,
+            ssh_key_reference=row.ssh_key_reference,
+            notes=row.notes,
+            status=row.status,
+            is_active=row.is_active,
+            created_at=row.created_at,
+        )
+        return {"data": probe}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

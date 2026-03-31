@@ -28,6 +28,20 @@ class HPCConnectionRead(ORMModel):
     created_at: datetime
 
 
+class HPCConnectionProbeRead(BaseModel):
+    """SSH test succeeded but row not persisted — id/created_at may be null."""
+
+    id: int | None = None
+    hostname: str
+    username: str
+    port: int
+    ssh_key_reference: str | None = None
+    notes: str | None = None
+    status: str
+    is_active: bool
+    created_at: datetime | None = None
+
+
 class HPCSummary(BaseModel):
     status: str
     queued: int
@@ -78,4 +92,5 @@ class SlurmResourcesConfig(BaseModel):
 
 HPCSummaryResponse = DataResponse[HPCSummary]
 HPCConnectionResponse = DataResponse[HPCConnectionRead]
+HPCConnectionProbeResponse = DataResponse[HPCConnectionProbeRead]
 HPCConnectionListResponse = DataResponse[list[HPCConnectionRead]]
