@@ -5,6 +5,7 @@
 # Override if your copy lives elsewhere (e.g. Veritas staging).
 #
 # Requires: license.txt + meld_license.txt in validator repo root; Docker/Podman.
+# If Podman fails to pull (insufficient UIDs/GIDs), use ./scripts/meld_run_apptainer.sh instead.
 #
 # Usage:
 #   export IDEAS_BIDS_ROOT=/ood/share/datasets/ideas

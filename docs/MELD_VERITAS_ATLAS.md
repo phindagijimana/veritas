@@ -164,4 +164,17 @@ sudo ./scripts/fix_podman_rootless_subuid.sh
 
 Then **log out and back in** (or a new SSH session), run **`podman system migrate`**, and retry. `scripts/dev-stack.sh up` checks this when the `docker` CLI is Podman and exits with the same hint.
 
+**Alternative (no Podman/Docker):** run MELD with **Apptainer** — same pipeline as `docker compose`, but pulls/runs the OCI image via `apptainer` (often available on HPC login nodes):
+
+```bash
+export IDEAS_BIDS_ROOT=/path/to/bids_IDEAS
+export APPTAINER_TMPDIR="$PWD/meld_docker_data/.apptainer_tmp"   # not /tmp if `noexec`
+mkdir -p "$APPTAINER_TMPDIR"
+./scripts/meld_run_apptainer.sh
+```
+
+The script prepares `meld_docker_data/input/`, then **`apptainer pull`**s to `meld_docker_data/meld_graph.sif` (first run is slow) and **`apptainer run`** with license bind mounts. NFS xattr warnings during pull are usually harmless.
+
+If **`apptainer pull`** fails with **`noexec` on /tmp**, set **`APPTAINER_TMPDIR`** to a directory on your home or project filesystem (as above).
+
 Disclaimer: MELD is **research software**; see the upstream disclaimer in their repository.

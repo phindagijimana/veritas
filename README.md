@@ -89,6 +89,8 @@ Full stack with Docker: `./scripts/dev-stack.sh up` (see script for Postgres por
 | Custom pipeline images | [`docs/VERITAS_PIPELINE_DOCKER_FLOW.md`](docs/VERITAS_PIPELINE_DOCKER_FLOW.md) |
 | IDEAS prepare smoke test | `./scripts/test_meld_ideas_smoke.sh` |
 
+**MELD container (Podman “insufficient UIDs”):** see **Podman / rootless** in [`docs/MELD_VERITAS_ATLAS.md`](docs/MELD_VERITAS_ATLAS.md) — **`sudo ./scripts/fix_podman_rootless_subuid.sh`** then re-login, or **`./scripts/meld_run_apptainer.sh`** (Apptainer, no Docker).
+
 **Health checks:** Veritas exposes `GET /health` and `GET /ready` (and under `/api/v1` where applicable).
 
 ---
