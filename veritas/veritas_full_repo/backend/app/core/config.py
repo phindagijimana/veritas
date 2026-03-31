@@ -9,6 +9,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
 
+# Dev UI is often opened as either hostname; both must be allowed for browser CORS.
+_DEFAULT_DEV_UI_ORIGINS = ("http://localhost:7000", "http://127.0.0.1:7000")
+
 _PLACEHOLDER_SECRETS = frozenset(
     {
         "",
@@ -52,7 +55,7 @@ class Settings(BaseSettings):
     rq_retry_intervals: str = "30,120,300"
     rq_failed_job_ttl_seconds: int = 604800
 
-    allowed_origins: list[str] = Field(default_factory=lambda: ["http://localhost:7000"])
+    allowed_origins: list[str] = Field(default_factory=lambda: list(_DEFAULT_DEV_UI_ORIGINS))
     # Comma-separated hostnames for TrustedHostMiddleware (e.g. api.veritas.example.com,localhost). Empty = disabled.
     trusted_hosts: str = ""
 
@@ -147,7 +150,7 @@ class Settings(BaseSettings):
     @classmethod
     def parse_allowed_origins(cls, v: Any) -> list[str]:
         if v is None or v == "":
-            return ["http://localhost:7000"]
+            return list(_DEFAULT_DEV_UI_ORIGINS)
         if isinstance(v, list):
             return [str(x).strip() for x in v if str(x).strip()]
         if isinstance(v, str):

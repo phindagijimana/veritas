@@ -480,8 +480,10 @@ reports:
 
       {apiHealth === "off" ? (
         <div className="border-b px-4 py-2 text-center text-xs" style={{ backgroundColor: COLORS.soft, borderColor: COLORS.line, color: COLORS.muted }}>
-          Demo mode: set <code className="rounded bg-white px-1">VITE_VERITAS_API_BASE_URL</code> (e.g.{" "}
-          <code className="rounded bg-white px-1">http://127.0.0.1:6000/api/v1</code>) and rebuild to connect the UI to a live Veritas API.
+          Demo mode: set <code className="rounded bg-white px-1">VITE_VERITAS_API_BASE_URL</code> (dev:{" "}
+          <code className="rounded bg-white px-1">/api/v1</code> via Vite proxy; or{" "}
+          <code className="rounded bg-white px-1">http://127.0.0.1:6000/api/v1</code>) and restart{" "}
+          <code className="rounded bg-white px-1">npm run dev</code>.
         </div>
       ) : (
         <div
@@ -494,7 +496,8 @@ reports:
         >
           {apiHealth === null && "Checking Veritas API…"}
           {apiHealth === "ok" && "Veritas API reachable (production / live backend)."}
-          {apiHealth === "down" && "Veritas API unreachable — check CORS, URL, and that the backend is running."}
+          {apiHealth === "down" &&
+            "Veritas API unreachable — ensure ./platform start on :6000, VITE_VERITAS_API_BASE_URL in .env.local, and restart npm run dev."}
         </div>
       )}
 
