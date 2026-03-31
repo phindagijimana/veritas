@@ -11,7 +11,8 @@ from app.models.pipeline import Pipeline
 from app.models.report import Report
 from app.models.request import EvaluationRequest
 from app.schemas.hpc import SlurmJobSubmitRequest
-from app.schemas.job import JobAdvanceResult, JobRead
+from app.core.config import get_settings
+from app.schemas.job import JobAdvanceResult, JobPreviewRead, JobRead
 from app.services.hpc_service import HPCConnectionService
 from app.services.hpc_scheduler import HPCSchedulerService
 from app.services.job_monitor import JobMonitorService
@@ -29,7 +30,7 @@ ADVANCE_SEQUENCE = {
 
 class JobService:
     @staticmethod
-    def _to_read(job: Job) -> JobRead:
+    def _to_read(job: Job, *, include_script: bool = False) -> JobRead:
         request_code = job.request.request_code if job.request else str(job.request_id)
         return JobRead(
             id=job.scheduler_job_id or f"JOB-{job.id}",
@@ -50,6 +51,7 @@ class JobService:
             metrics_path=job.metrics_path,
             results_csv_path=job.results_csv_path,
             report_path=job.report_path,
+            sbatch_script=(job.sbatch_script if include_script else None),
         )
 
     @staticmethod
@@ -64,7 +66,7 @@ class JobService:
         return {"queued": int(queued), "running": int(running)}
 
     @staticmethod
-    def get(db: Session, job_id: int, sync: bool = True) -> JobRead | None:
+    def get(db: Session, job_id: int, sync: bool = True, *, include_script: bool = False) -> JobRead | None:
         item = db.get(Job, job_id)
         if not item:
             return None
@@ -72,7 +74,7 @@ class JobService:
             JobMonitorService.sync_job(db, item)
             db.commit()
             db.refresh(item)
-        return JobService._to_read(item)
+        return JobService._to_read(item, include_script=include_script)
 
     @staticmethod
     def submit_slurm_job(db: Session, request_id: int | str, payload: SlurmJobSubmitRequest) -> JobRead:
@@ -135,6 +137,50 @@ class JobService:
         db.commit()
         db.refresh(job)
         return JobService._to_read(job)
+
+    @staticmethod
+    def preview_slurm_job(db: Session, request_id: int | str, payload: SlurmJobSubmitRequest) -> JobPreviewRead:
+        """Build Slurm + MELD/runtime scripts without persisting a job or calling SSH/sbatch."""
+        request = RequestService._resolve(db, request_id)
+        if not request:
+            raise ValueError("Request not found")
+        if request.status == RequestStatus.completed.value:
+            raise ValueError("Cannot preview for a completed request")
+
+        rp = (payload.runtime_profile or "generic").strip().lower()
+        if rp == "meld_graph" and not (payload.meld_subject_id or "").strip():
+            raise ValueError("meld_subject_id is required when runtime_profile=meld_graph")
+
+        pipeline_yaml: str | None = None
+        name_ref = (payload.pipeline_name or "").strip()
+        if name_ref:
+            row = db.query(Pipeline).filter(Pipeline.name == name_ref).first()
+            if row:
+                pipeline_yaml = row.yaml_definition
+        if pipeline_yaml is None:
+            row = db.query(Pipeline).filter(Pipeline.image == payload.pipeline).first()
+            if row:
+                pipeline_yaml = row.yaml_definition
+
+        scheduler = HPCSchedulerService()
+        bundle = scheduler.preview(request.request_code, payload, pipeline_yaml=pipeline_yaml)
+        settings = get_settings()
+        return JobPreviewRead(
+            runtime_engine=bundle.runtime_engine,
+            hpc_mode=settings.hpc_mode,
+            meld_ideas_default_staging_path=settings.meld_ideas_default_staging_path,
+            hpc_job_prologue_sh=(settings.hpc_job_prologue_sh or "").strip() or None,
+            sbatch_script=bundle.sbatch_script,
+            pipeline_runtime_script=bundle.pipeline_runtime_script,
+            remote_workdir=bundle.remote_workdir,
+            stdout_path=bundle.stdout_path,
+            stderr_path=bundle.stderr_path,
+            runtime_manifest_path=bundle.runtime_manifest_path,
+            launch_command=bundle.launch_command,
+            metrics_path=bundle.metrics_path,
+            results_csv_path=bundle.results_csv_path,
+            report_path=bundle.report_path,
+        )
 
     @staticmethod
     def sync(db: Session, job_id: int) -> JobRead | None:

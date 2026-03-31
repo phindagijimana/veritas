@@ -93,6 +93,8 @@ Full stack with Docker: `./scripts/dev-stack.sh up` (see script for Postgres por
 
 **Health checks:** Veritas exposes `GET /health` and `GET /ready` (and under `/api/v1` where applicable).
 
+**MELD / Slurm on Veritas:** set `RUNTIME_ENGINE=apptainer` or `singularity` and `MELD_IDEAS_DEFAULT_STAGING_PATH` in `backend/.env`. **Preview** generated scripts without submitting: `POST /api/v1/jobs/preview/{request_id}` with the same JSON body as job submit. **Inspect** stored sbatch: `GET /api/v1/jobs/{id}?include_script=1`.
+
 ---
 
 ## CLI entrypoints

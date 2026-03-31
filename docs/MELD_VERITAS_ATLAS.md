@@ -49,6 +49,8 @@ Veritas generates a **bash** runtime script (T1-only BIDS config, `--fastsurfer`
 
 Set **`RUNTIME_ENGINE`** in the Veritas API (`backend/.env`) to **`docker`** (default), **`apptainer`**, or **`singularity`**. The first is for nodes with Docker; the latter two generate Slurm scripts that use **`apptainer run`** or **`singularity run`** with **`docker://registry/image:tag`** for OCI images (or an absolute path to a local `.sif`). Pair with **`HPC_JOB_PROLOGUE_SH`** (e.g. `module load apptainer`) as required by your cluster.
 
+**Preview on the Veritas API (no cluster call):** `POST /api/v1/jobs/preview/{request_id}` with the same JSON body as **`POST /api/v1/jobs/submit/{request_id}`**. The response includes **`sbatch_script`**, **`pipeline_runtime_script`** (MELD bash with your `RUNTIME_ENGINE`), and current **`hpc_mode`** / **`meld_ideas_default_staging_path`**. Use **`GET /api/v1/jobs/{job_id}?include_script=1`** to retrieve the full sbatch after a real submit.
+
 Example JSON body:
 
 ```json

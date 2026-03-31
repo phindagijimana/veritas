@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.db.session import get_db
 from app.core.security import get_current_user, require_admin
 from app.schemas.hpc import SlurmJobSubmitRequest
-from app.schemas.job import JobAdvanceResponse, JobItemResponse, JobListResponse
+from app.schemas.job import JobAdvanceResponse, JobItemResponse, JobListResponse, JobPreviewResponse
 from app.services.job_service import JobService
 from app.workers.job_worker import monitor_all_jobs
 from app.workers.tasks import enqueue_job_monitor_sweep
@@ -21,9 +21,24 @@ def list_jobs(db: Session = Depends(get_db)):
     return {"data": JobService.list(db)}
 
 
+@router.post("/preview/{request_id}", response_model=JobPreviewResponse)
+def preview_slurm_job(request_id: str, payload: SlurmJobSubmitRequest, db: Session = Depends(get_db)):
+    try:
+        return {"data": JobService.preview_slurm_job(db, request_id, payload)}
+    except ValueError as exc:
+        msg = str(exc)
+        if msg == "Request not found":
+            raise HTTPException(status_code=404, detail=msg) from exc
+        raise HTTPException(status_code=400, detail=msg) from exc
+
+
 @router.get("/{job_id}", response_model=JobItemResponse)
-def get_job(job_id: int, db: Session = Depends(get_db)):
-    item = JobService.get(db, job_id)
+def get_job(
+    job_id: int,
+    include_script: bool = Query(False, description="Include full sbatch script body (can be large)."),
+    db: Session = Depends(get_db),
+):
+    item = JobService.get(db, job_id, include_script=include_script)
     if not item:
         raise HTTPException(status_code=404, detail="Job not found")
     return {"data": item}
