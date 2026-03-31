@@ -144,6 +144,14 @@ To only prepare `input/` without starting Docker:
 python3 scripts/meld_prepare_bids_input.py --bids-root "$IDEAS_BIDS_ROOT" --reset-input
 ```
 
+### Smoke test (minimal fixture)
+
+```bash
+./scripts/test_meld_ideas_smoke.sh
+```
+
+Defaults to `scripts/fixtures/ideas_minimal_bids` (one subject, placeholder T1w) so you can verify **prepare/link + JSON** without an IDEAS mount. Set **`IDEAS_BIDS_ROOT`** to a real IDEAS path when available. **`RUN_MELD_CONTAINER=1`** runs the MELD container after prepare (needs working Docker and valid NIfTI for a real prediction).
+
 ### Podman / rootless image pulls
 
 Compose files use fully qualified names (e.g. `docker.io/meldproject/meld_graph:latest`). If you still see **`insufficient UIDs or GIDs`** when pulling, your login is missing **`/etc/subuid`** and **`/etc/subgid`** entries (common on LDAP names like `user@realm`).
