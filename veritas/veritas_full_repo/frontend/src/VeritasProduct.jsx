@@ -8,7 +8,7 @@ import {
   submitSlurmJob,
   testHpcConnection,
 } from "./api/veritasClient.js";
-import { isVeritasApiConfigured } from "./config.js";
+import { hpcConnectFormDefaults, isVeritasApiConfigured } from "./config.js";
 
 const COLORS = {
   navy: "#0f2f6b",
@@ -388,7 +388,17 @@ export default function VeritasApp() {
     entrypoint: "python /app/run.py --input /input --output /output",
     description: "Built from your Dockerfile, pushed to Docker Hub, then referenced here for Slurm jobs.",
   });
-  const [hpcForm, setHpcForm] = useState({ hostname: "hpc.example.org", username: "researcher", port: "22", key_path: "~/.ssh/id_rsa", notes: "" });
+  const [hpcForm, setHpcForm] = useState(() => {
+    const d = hpcConnectFormDefaults();
+    const hasEnv = Boolean(d.hostname && d.username);
+    return {
+      hostname: hasEnv ? d.hostname : "hpc.example.org",
+      username: hasEnv ? d.username : "researcher",
+      port: hasEnv ? (d.port || "22") : "22",
+      key_path: hasEnv ? (d.key_path || "~/.ssh/id_rsa") : "~/.ssh/id_rsa",
+      notes: hasEnv ? d.notes : "",
+    };
+  });
   const [slurmForm, setSlurmForm] = useState({
     job_name: "biomarker-eval-job",
     resources: SLURM_PRESETS[1],
