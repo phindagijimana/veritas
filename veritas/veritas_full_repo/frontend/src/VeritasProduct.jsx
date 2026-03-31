@@ -566,7 +566,17 @@ reports:
               className="flex min-w-0 items-center gap-3 text-left"
               style={{ background: "none", border: "none", cursor: "pointer", padding: 0 }}
             >
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-white font-bold" style={{ color: COLORS.navy }}>V</div>
+              <div
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/25 bg-white/10 shadow-inner"
+                aria-hidden
+              >
+                <span
+                  className="select-none text-[1.35rem] font-bold leading-none tracking-tight text-white"
+                  style={{ fontFamily: "Georgia, 'Times New Roman', ui-serif, serif" }}
+                >
+                  V
+                </span>
+              </div>
               <div className="min-w-0 text-left">
                 <div className="truncate font-semibold tracking-wide text-white">Veritas</div>
                 <div className="hidden text-xs sm:block" style={{ color: "rgba(219,234,254,0.8)" }}>AI biomarker validation platform</div>
