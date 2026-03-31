@@ -1,85 +1,92 @@
-# Validator monorepo
+# Veritas & Atlas Data API
 
-## Local Atlas + Veritas (Docker)
+Clinical AI validation stack: **Atlas** exposes dataset access, staging, and policy; **Veritas** runs biomarker pipeline evaluation, HPC/Slurm jobs, and reporting—with optional integration between the two.
 
-Start **both** Postgres/Redis/MinIO stacks without service-name clashes (separate compose projects):
+| Component | Role | Default port |
+|-----------|------|--------------|
+| **Atlas Data API** | Datasets, staging, grants, Pennsieve-backed public data | `8000` |
+| **Veritas Platform API** | Pipelines, jobs, HPC, MELD/IDEAS workflows, artifacts | `6000` |
+| **Veritas UI** (optional) | Product frontend (Vite) | `7000` |
+
+---
+
+## Repository layout
+
+| Path | Description |
+|------|-------------|
+| `atlas_api/atlas_api_app/` | Atlas Data API (FastAPI) |
+| `veritas/veritas_full_repo/backend/` | Veritas API |
+| `veritas/veritas_full_repo/frontend/` | Veritas web UI |
+| `docs/` | Architecture and operations (MELD, production, pipelines) |
+| `scripts/` | Dev stack, E2E helpers, MELD/IDEAS smoke tests |
+
+---
+
+## Quick start
+
+### Atlas API
 
 ```bash
-chmod +x scripts/dev-stack.sh   # once
-./scripts/dev-stack.sh up
-./scripts/dev-stack.sh ps
-./scripts/dev-stack.sh down
+./api install          # or ./api venv && ./api install
+cp atlas_api/atlas_api_app/.env.example atlas_api/atlas_api_app/.env
+# Set database URL; run Postgres (see atlas_api_app README) then:
+./api migrate
+./api start            # http://127.0.0.1:8000
 ```
 
-**Podman rootless:** if `dev-stack.sh up` reports missing `/etc/subuid`, run **`sudo ./scripts/fix_podman_rootless_subuid.sh`**, then start a new login session. (Not needed for Docker Engine.)
-
-Then run **`alembic upgrade head`** in each app directory (see table below), copy `.env.example` → `.env`, and align **Veritas ↔ Atlas** credentials:
-
-| Setting | Atlas (`atlas_api_app/.env`) | Veritas (`backend/.env`) |
-|--------|------------------------------|---------------------------|
-| Shared Veritas secret | `ATLAS_VERITAS_CLIENT_SECRET=dev-shared-secret` | `ATLAS_API_CLIENT_SECRET=dev-shared-secret` |
-| Live integration | — | `ATLAS_INTEGRATION_MODE=live` |
-| Atlas base URL | `ATLAS_PUBLIC_BASE_URL=http://127.0.0.1:8000` | `ATLAS_API_BASE_URL=http://127.0.0.1:8000/api/v1` |
-
-Optional live checks: `ATLAS_LIVE_TEST=1` and `pytest tests/integration/test_atlas_live_integration.py` (Veritas backend).
-
-### Full local run (Docker + migrations + E2E HTTP)
-
-From repo root (shared secret must match on both apps):
+### Veritas Platform
 
 ```bash
-chmod +x scripts/full_local_run.sh scripts/full_local_e2e.py
-export ATLAS_VERITAS_CLIENT_SECRET=dev-shared-atlas-veritas-secret
-./scripts/full_local_run.sh
-# In two more terminals, start ./api and ./platform as printed, then:
-export ATLAS_VERITAS_CLIENT_SECRET ATLAS_API_CLIENT_SECRET
-python3 scripts/full_local_e2e.py
+./platform install
+cp veritas/veritas_full_repo/backend/env.local.sqlite.example veritas/veritas_full_repo/backend/.env
+./platform start       # http://127.0.0.1:6000 — GET /health
 ```
 
-If Atlas and Veritas are already running: `./scripts/full_local_run.sh --e2e-only` (same env vars as below). Use `DATASET_ID=ideas` (default) or another seeded Atlas dataset id.
+For PostgreSQL/Redis (production-like), use `veritas/veritas_full_repo/backend/docker-compose.yml`, copy `backend/.env.example` → `.env`, then `./platform migrate && ./platform start`.
 
-## `./api` — Atlas API (`atlas_api/atlas_api_app`)
+### Veritas UI (local dev)
 
-| Command | Description |
-|--------|-------------|
-| `./api install` | `pip install -e ".[dev]"` (uses `atlas_api_app/.venv` if it exists) |
-| `./api venv` | Create `atlas_api_app/.venv` and install editable with dev extras |
-| `./api start` | Run the API (`python -m app serve`, default port **8000**) |
-| `./api dev-token` | Print an HS256 dev JWT (`--sub`, `--roles`) |
-| `./api migrate` | `alembic upgrade head` |
-| `./api test` | `pytest` |
-| `./api shell` | Python REPL with `app` importable |
+```bash
+cp veritas/veritas_full_repo/frontend/env.local.example veritas/veritas_full_repo/frontend/.env.local
+cd veritas/veritas_full_repo/frontend && npm install && npm run dev
+```
 
-Override host/port with `ATLAS_HOST`, `ATLAS_PORT`. Implementation: `bin/api` (root `./api` is a shim).
+`VITE_VERITAS_API_BASE_URL=/api/v1` uses the Vite dev proxy; ensure the Veritas API is running.
 
-Legacy: `./atlas` and `bin/atlas` call the same script.
+---
 
-## `./platform` — Veritas backend (`veritas/veritas_full_repo/backend`)
+## Atlas ↔ Veritas integration
 
-| Command | Description |
-|--------|-------------|
-| `./platform install` | `pip install -e .` (uses `backend/.venv` if present) |
-| `./platform venv` | Create `backend/.venv` and install |
-| `./platform start` | Run the API (default port **6000**) |
-| `./platform worker` | Celery worker |
-| `./platform migrate` | `alembic upgrade head` |
-| `./platform test` | `pytest` (expects Postgres; see backend `README.md` / `docker-compose.yml` on port **5433**) |
-| `./platform shell` | Python REPL |
+Use the **same client secret** on both sides when Veritas calls Atlas (`ATLAS_INTEGRATION_MODE=live`):
 
-Default DB is **PostgreSQL** (`DATABASE_URL` in `.env.example`). Run **`docker compose up -d`** in `veritas/veritas_full_repo/backend` before **`./platform start`** or **`pytest`**. Quick tests without Docker: **`VERITAS_USE_SQLITE_TESTS=1 pytest`**.
+| Atlas (`atlas_api_app/.env`) | Veritas (`backend/.env`) |
+|------------------------------|---------------------------|
+| `ATLAS_VERITAS_CLIENT_SECRET=<shared>` | `ATLAS_API_CLIENT_SECRET=<shared>` |
+| — | `ATLAS_API_BASE_URL=http://127.0.0.1:8000/api/v1` |
+| `ATLAS_PUBLIC_BASE_URL=http://127.0.0.1:8000` | — |
 
-Override host/port with `VERITAS_HOST`, `VERITAS_PORT`. Implementation: `bin/platform`.
+Full stack with Docker: `./scripts/dev-stack.sh up` (see script for Postgres ports). Run Alembic in each app after DBs are up.
 
-Legacy: `./vt` and `bin/veritas` call the same script.
+---
 
-**Veritas frontend (product UI):** `veritas/veritas_full_repo/frontend` is a Vite + React app. After `npm install`, run **`npm run dev`** — default URL **http://127.0.0.1:7000**. The demo UI includes IDEAS / MELD catalog copy; the **authoritative** MELD pipeline (`meld-graph-fcd`) is registered by the backend on startup — confirm with **`GET http://127.0.0.1:6000/api/v1/pipelines`** while `./platform start` is running.
+## Operations & references
 
-**Custom Docker pipelines:** see **`docs/VERITAS_PIPELINE_DOCKER_FLOW.md`** (build → push to your registry, e.g. `docker.io/phindagijimana321/…` → YAML `image` → job → user reports).
+| Topic | Document |
+|-------|----------|
+| MELD Graph + IDEAS | [`docs/MELD_VERITAS_ATLAS.md`](docs/MELD_VERITAS_ATLAS.md) |
+| Veritas production deploy | [`docs/VERITAS_PRODUCTION.md`](docs/VERITAS_PRODUCTION.md) |
+| Custom pipeline images | [`docs/VERITAS_PIPELINE_DOCKER_FLOW.md`](docs/VERITAS_PIPELINE_DOCKER_FLOW.md) |
+| IDEAS prepare smoke test | `./scripts/test_meld_ideas_smoke.sh` |
 
-**Production:** **`docs/VERITAS_PRODUCTION.md`**, **`veritas/veritas_full_repo/backend/.env.production.example`**, Gunicorn **`Dockerfile`**, root **`GET /health`** / **`GET /ready`** for probes, optional **`TRUSTED_HOSTS`**. Frontend: set **`VITE_VERITAS_API_BASE_URL`** (e.g. `http://127.0.0.1:6000/api/v1`) and rebuild so the UI probes the API and lists live pipelines on the Pipeline page.
+**Health checks:** Veritas exposes `GET /health` and `GET /ready` (and under `/api/v1` where applicable).
 
-## Executable bit
+---
 
-If needed:
+## CLI entrypoints
 
-`chmod +x api platform atlas vt bin/api bin/platform bin/atlas bin/veritas scripts/dev-stack.sh scripts/full_local_run.sh scripts/full_local_e2e.py`
+| Script | Service |
+|--------|---------|
+| `./api` | Atlas API (`bin/api`) — `install`, `start`, `migrate`, `test`, `dev-token` |
+| `./platform` | Veritas API (`bin/platform`) — `install`, `start`, `migrate`, `test`, `worker` |
+
+Environment overrides: `ATLAS_HOST` / `ATLAS_PORT`, `VERITAS_HOST` / `VERITAS_PORT`.
