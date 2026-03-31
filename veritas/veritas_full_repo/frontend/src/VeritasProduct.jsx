@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 
-import { fetchPipelines } from "./api/veritasClient.js";
+import { fetchPipelines, previewSlurmJob } from "./api/veritasClient.js";
 import { isVeritasApiConfigured } from "./config.js";
 
 const COLORS = {
@@ -66,6 +66,37 @@ const SLURM_PRESETS = [
   "2 GPU • 24 CPU • 128 GB RAM",
   "CPU Only • 16 CPU • 64 GB RAM",
 ];
+
+/** Maps admin Slurm form fields to POST /jobs/preview|submit JSON (SlurmJobSubmitRequest). */
+function buildSlurmSubmitPayload(slurmForm) {
+  const gpu = parseInt(String(slurmForm.gpus), 10);
+  const cpu = parseInt(String(slurmForm.cpus), 10);
+  const mem = parseInt(String(slurmForm.memory_gb), 10);
+  const rp = (slurmForm.runtime_profile || "generic").trim().toLowerCase();
+  const payload = {
+    job_name: slurmForm.job_name.trim(),
+    pipeline: slurmForm.pipeline_image.trim(),
+    dataset: slurmForm.dataset.trim(),
+    partition: (slurmForm.partition || "gpu").trim(),
+    resources: {
+      preset: slurmForm.resources || null,
+      gpu: Number.isFinite(gpu) && gpu > 0 ? gpu : 1,
+      cpu: Number.isFinite(cpu) && cpu > 0 ? cpu : 16,
+      memory_gb: Number.isFinite(mem) && mem > 0 ? mem : 64,
+      wall_time: (slurmForm.wall_time || "08:00:00").trim(),
+      constraint: slurmForm.constraint.trim() || null,
+      sbatch_overrides: slurmForm.sbatch_overrides.trim() || null,
+    },
+    runtime_profile: rp === "meld_graph" ? "meld_graph" : "generic",
+  };
+  const pn = slurmForm.pipeline_name.trim();
+  if (pn) payload.pipeline_name = pn;
+  if (rp === "meld_graph") {
+    const sid = slurmForm.meld_subject_id.trim();
+    if (sid) payload.meld_subject_id = sid;
+  }
+  return payload;
+}
 
 const DATASETS = [
   { name: "HS Dataset", disease: "Epilepsy", biomarker: "HS", code: "ATLAS-HS-1", version: "v1", subjects: 212, source: "Atlas / Pennsieve", qc: "validated" },
@@ -219,10 +250,10 @@ function StatusText({ message, error = false }) {
   return <div className="text-sm" style={{ color: error ? "#b91c1c" : COLORS.muted }}>{message}</div>;
 }
 
-function ModalShell({ title, subtitle, onClose, children, footer }) {
+function ModalShell({ title, subtitle, onClose, children, footer, panelClassName = "max-w-2xl" }) {
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/40 px-4">
-      <div className="w-full max-w-2xl rounded-3xl border bg-white p-6 shadow-2xl" style={{ borderColor: COLORS.line }}>
+      <div className={`w-full ${panelClassName} max-h-[92vh] overflow-y-auto rounded-3xl border bg-white p-6 shadow-2xl`} style={{ borderColor: COLORS.line }}>
         <div className="flex items-start justify-between gap-4">
           <div>
             <h3 className="text-xl font-semibold" style={{ color: COLORS.text }}>{title}</h3>
@@ -349,6 +380,8 @@ export default function VeritasApp() {
     runtime_profile: "generic",
     meld_subject_id: "",
   });
+  const [jobPreview, setJobPreview] = useState({ loading: false, error: null, data: null });
+  const [slurmPreviewTab, setSlurmPreviewTab] = useState("sbatch");
   const [adminNote, setAdminNote] = useState(REQUESTS[0].admin_note);
   const [reportForm, setReportForm] = useState({ subject: "", body: "" });
   const [pipelinesLive, setPipelinesLive] = useState(null);
@@ -1097,6 +1130,8 @@ reports:
                       }));
                       setShowHpcModal(false);
                       setShowReportModal(false);
+                      setJobPreview({ loading: false, error: null, data: null });
+                      setSlurmPreviewTab("sbatch");
                       setShowSlurmModal(true);
                     }}
                     className="rounded-full px-5 py-3 text-sm font-medium text-white"
@@ -1121,7 +1156,8 @@ reports:
                     Send report to requester
                   </button>
                   <p className="text-xs leading-relaxed" style={{ color: COLORS.muted }}>
-                    Maps to <code className="rounded bg-white px-1">POST /api/v1/jobs/submit/{"{request_id}"}</code> and report notifications.
+                    <code className="rounded bg-white px-1">POST …/jobs/preview/{"{request_id}"}</code> (scripts only) and{" "}
+                    <code className="rounded bg-white px-1">POST …/jobs/submit/{"{request_id}"}</code> when wired; report notifications separately.
                   </p>
                 </div>
               </div>
@@ -1169,18 +1205,69 @@ reports:
       {showSlurmModal ? (
         <ModalShell
           title="Submit Slurm job"
-          subtitle={`Request ${selectedRequest.id} · ${selectedRequest.user} · maps to POST /api/v1/jobs/submit/${selectedRequest.id}`}
-          onClose={() => setShowSlurmModal(false)}
+          subtitle={`Request ${selectedRequest.id} · ${selectedRequest.user} · preview POST /api/v1/jobs/preview/${selectedRequest.id} · submit POST /api/v1/jobs/submit/${selectedRequest.id}`}
+          panelClassName="max-w-5xl"
+          onClose={() => {
+            setShowSlurmModal(false);
+            setJobPreview({ loading: false, error: null, data: null });
+          }}
           footer={
             <>
-              <button type="button" onClick={() => setShowSlurmModal(false)} className="rounded-full border px-5 py-3 text-sm font-medium" style={{ borderColor: COLORS.line, color: COLORS.navy }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowSlurmModal(false);
+                  setJobPreview({ loading: false, error: null, data: null });
+                }}
+                className="rounded-full border px-5 py-3 text-sm font-medium"
+                style={{ borderColor: COLORS.line, color: COLORS.navy }}
+              >
                 Cancel
+              </button>
+              <button
+                type="button"
+                disabled={jobPreview.loading}
+                onClick={async () => {
+                  if (!isVeritasApiConfigured()) {
+                    setJobPreview({
+                      loading: false,
+                      error: "Set VITE_VERITAS_API_BASE_URL (e.g. /api/v1 with the Vite proxy to your Veritas API).",
+                      data: null,
+                    });
+                    return;
+                  }
+                  if (!slurmForm.job_name.trim() || !slurmForm.pipeline_image.trim() || !slurmForm.dataset.trim()) {
+                    setJobPreview({ loading: false, error: "Job name, pipeline image, and dataset are required.", data: null });
+                    return;
+                  }
+                  if (slurmForm.runtime_profile === "meld_graph" && !slurmForm.meld_subject_id.trim()) {
+                    setJobPreview({
+                      loading: false,
+                      error: "MELD subject id is required when runtime profile is meld_graph.",
+                      data: null,
+                    });
+                    return;
+                  }
+                  setJobPreview({ loading: true, error: null, data: null });
+                  setSlurmPreviewTab("sbatch");
+                  const res = await previewSlurmJob(selectedRequest.id, buildSlurmSubmitPayload(slurmForm));
+                  if (res.ok) {
+                    setJobPreview({ loading: false, error: null, data: res.data });
+                  } else {
+                    setJobPreview({ loading: false, error: res.message, data: null });
+                  }
+                }}
+                className="rounded-full border px-5 py-3 text-sm font-medium disabled:opacity-50"
+                style={{ borderColor: COLORS.line, color: COLORS.navy }}
+              >
+                {jobPreview.loading ? "Previewing…" : "Preview scripts"}
               </button>
               <button
                 type="button"
                 onClick={() => {
                   setShowSlurmModal(false);
-                  setReportStatus(`Job “${slurmForm.job_name}” submitted for ${selectedRequest.id} (demo).`);
+                  setJobPreview({ loading: false, error: null, data: null });
+                  setReportStatus(`Job “${slurmForm.job_name}” submitted for ${selectedRequest.id} (demo UI — wire Submit to POST /api/v1/jobs/submit/${selectedRequest.id}).`);
                 }}
                 className="rounded-full px-5 py-3 text-sm font-medium text-white"
                 style={{ backgroundColor: COLORS.navy }}
@@ -1229,6 +1316,77 @@ reports:
               />
             </div>
           </div>
+          {jobPreview.error ? (
+            <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-3 text-sm text-red-900" role="alert">
+              {jobPreview.error}
+            </div>
+          ) : null}
+          {jobPreview.data ? (
+            <div className="mt-6 rounded-2xl border p-4" style={{ borderColor: COLORS.line, backgroundColor: COLORS.soft }}>
+              <p className="text-sm font-medium" style={{ color: COLORS.text }}>
+                Preview (no job submitted)
+              </p>
+              <dl className="mt-2 grid gap-1 text-xs sm:grid-cols-2" style={{ color: COLORS.muted }}>
+                <div>
+                  <dt className="inline font-medium" style={{ color: COLORS.text }}>runtime_engine: </dt>
+                  <dd className="inline font-mono">{jobPreview.data.runtime_engine}</dd>
+                </div>
+                <div>
+                  <dt className="inline font-medium" style={{ color: COLORS.text }}>hpc_mode: </dt>
+                  <dd className="inline font-mono">{jobPreview.data.hpc_mode}</dd>
+                </div>
+                {jobPreview.data.meld_ideas_default_staging_path ? (
+                  <div className="sm:col-span-2">
+                    <dt className="inline font-medium" style={{ color: COLORS.text }}>meld_ideas_default_staging_path: </dt>
+                    <dd className="inline break-all font-mono">{jobPreview.data.meld_ideas_default_staging_path}</dd>
+                  </div>
+                ) : null}
+              </dl>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {[
+                  { id: "sbatch", label: "Slurm sbatch" },
+                  { id: "pipeline", label: "Pipeline runtime" },
+                  { id: "paths", label: "Paths & launch" },
+                ].map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => setSlurmPreviewTab(t.id)}
+                    className="rounded-full border px-3 py-1.5 text-xs font-medium"
+                    style={{
+                      borderColor: slurmPreviewTab === t.id ? "#bfdbfe" : COLORS.line,
+                      backgroundColor: slurmPreviewTab === t.id ? "#eff6ff" : "#ffffff",
+                      color: COLORS.navy,
+                    }}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+              {slurmPreviewTab === "paths" ? (
+                <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-xl border bg-white p-3 text-xs" style={{ borderColor: COLORS.line, color: COLORS.text }}>
+                  {[
+                    `remote_workdir: ${jobPreview.data.remote_workdir}`,
+                    `stdout: ${jobPreview.data.stdout_path}`,
+                    `stderr: ${jobPreview.data.stderr_path}`,
+                    `runtime_manifest: ${jobPreview.data.runtime_manifest_path}`,
+                    `metrics: ${jobPreview.data.metrics_path}`,
+                    `results_csv: ${jobPreview.data.results_csv_path}`,
+                    `report: ${jobPreview.data.report_path}`,
+                    "",
+                    `launch_command:`,
+                    jobPreview.data.launch_command,
+                  ].join("\n")}
+                </pre>
+              ) : (
+                <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap rounded-xl border bg-white p-3 text-xs" style={{ borderColor: COLORS.line, color: COLORS.text }}>
+                  {slurmPreviewTab === "sbatch"
+                    ? jobPreview.data.sbatch_script
+                    : jobPreview.data.pipeline_runtime_script || "— (no pipeline runtime script for this profile)"}
+                </pre>
+              )}
+            </div>
+          ) : null}
         </ModalShell>
       ) : null}
 
