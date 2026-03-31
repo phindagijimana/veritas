@@ -388,7 +388,13 @@ export default function VeritasApp() {
     entrypoint: "python /app/run.py --input /input --output /output",
     description: "Built from your Dockerfile, pushed to Docker Hub, then referenced here for Slurm jobs.",
   });
-  const [hpcForm, setHpcForm] = useState({ hostname: "hpc.example.org", username: "researcher", port: "22", key_path: "~/.ssh/id_rsa", notes: "OOD login available" });
+  const [hpcForm, setHpcForm] = useState({
+    hostname: "ood.urmc-sh.rochester.edu",
+    username: "pndagiji",
+    port: "2222",
+    key_path: "~/.ssh/id_ed25519",
+    notes: "URMC OOD / SSH — hostname is host only (not user@host). API runs Paramiko from the Veritas server.",
+  });
   const [slurmForm, setSlurmForm] = useState({
     job_name: "biomarker-eval-job",
     resources: SLURM_PRESETS[1],
