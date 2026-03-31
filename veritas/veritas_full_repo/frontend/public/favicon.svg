@@ -1,8 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Veritas">
   <rect width="32" height="32" rx="8" fill="#0f2f6b"/>
-  <!-- Upward-pointing V: apex at top (y small), opening toward bottom (y large) -->
+  <!-- Letter V: vertex at bottom (y large), opening at top — not a caret (^) -->
   <path
     fill="#ffffff"
-    d="M10 26 L16 8 L22 26 L18.8 26 L16 13.5 L13.2 26 Z"
+    d="M8 7 L16 27 L24 7 L20.5 7 L16 18 L11.5 7 Z"
   />
 </svg>
