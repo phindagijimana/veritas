@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import PurePosixPath
 import shlex
 import textwrap
 
@@ -26,6 +25,22 @@ class QueueSummary:
     queue_count: int
     running_count: int
     gpu_free: int
+
+
+def remote_path_for_shell(path: str) -> str:
+    """
+    Map ~/... to $HOME/... for remote shell commands.
+    Single-quoted paths from shlex.quote do not expand ~; this fixes mkdir/cd on the cluster.
+    """
+    p = path.strip()
+    if p.startswith("~/"):
+        return "$HOME/" + p[2:]
+    return p
+
+
+def shell_double_quote(s: str) -> str:
+    """Double-quote for remote bash so $HOME and spaces are handled."""
+    return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
 class MockHPCAdapter:
@@ -75,15 +90,18 @@ class SlurmHPCAdapter:
     ) -> SubmitResult:
         if connection is None:
             raise ValueError("No active HPC connection configured")
-        script_path = f"{remote_workdir}/{script_name}"
-        mkdir_cmd = f"mkdir -p {shlex.quote(remote_workdir)}"
+        rw = remote_path_for_shell(remote_workdir)
+        script_path = f"{rw}/{script_name}"
+        q_dir = shell_double_quote(rw)
+        q_script = shell_double_quote(script_path)
+        mkdir_cmd = f"mkdir -p {q_dir}"
         heredoc = textwrap.dedent(f"""
-        cat > {shlex.quote(script_path)} <<'EOF'
+        cat > {q_script} <<'EOF'
         {script}
         EOF
-        chmod +x {shlex.quote(script_path)}
+        chmod +x {q_script}
         """).strip()
-        submit_cmd = f"cd {shlex.quote(remote_workdir)} && sbatch {shlex.quote(script_name)}"
+        submit_cmd = f"cd {q_dir} && sbatch {shlex.quote(script_name)}"
         self.ssh.run(connection, mkdir_cmd)
         self.ssh.run(connection, heredoc)
         result = self.ssh.run(connection, submit_cmd)

@@ -6,15 +6,16 @@ from sqlalchemy.orm import Session
 from app.models.hpc_connection import HPCConnection
 from app.schemas.hpc import HPCConnectionConfig, HPCSummary
 from app.services.hpc_adapter import get_hpc_adapter
+from app.services.ssh_service import SSHService
 
 
 class HPCConnectionService:
     @staticmethod
     def connect(db: Session, config: HPCConnectionConfig, persist: bool = True) -> HPCConnection:
-        active_connections = db.scalars(select(HPCConnection).where(HPCConnection.is_active.is_(True)))
-        for connection in active_connections:
-            connection.is_active = False
-
+        """
+        Validate SSH with Paramiko (real connection), then optionally persist as active HPC.
+        Does not use the mock Slurm adapter — you get a true SSH check even when HPC_MODE=mock.
+        """
         key_ref = config.ssh_key_reference or config.key_path
         item = HPCConnection(
             hostname=config.hostname,
@@ -25,12 +26,17 @@ class HPCConnectionService:
             status="pending",
             is_active=True,
         )
-        adapter = get_hpc_adapter()
-        item.status = "connected" if adapter.validate_connection(item) else "failed"
-        if persist:
-            db.add(item)
-            db.commit()
-            db.refresh(item)
+        ssh = SSHService()
+        ssh.validate_connection(item)
+        item.status = "connected"
+        if not persist:
+            return item
+        active_connections = db.scalars(select(HPCConnection).where(HPCConnection.is_active.is_(True)))
+        for connection in active_connections:
+            connection.is_active = False
+        db.add(item)
+        db.commit()
+        db.refresh(item)
         return item
 
     @staticmethod

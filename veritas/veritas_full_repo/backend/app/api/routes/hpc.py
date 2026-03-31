@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -28,9 +28,15 @@ def list_hpc_connections(db: Session = Depends(get_db)):
 
 @router.post("/connect", response_model=HPCConnectionResponse)
 def connect_hpc(payload: HPCConnectionConfig, db: Session = Depends(get_db)):
-    return {"data": HPCConnectionService.connect(db, payload)}
+    try:
+        return {"data": HPCConnectionService.connect(db, payload)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/test-connection", response_model=HPCConnectionResponse)
 def test_hpc_connection(payload: HPCConnectionConfig, db: Session = Depends(get_db)):
-    return {"data": HPCConnectionService.test_connection(db, payload)}
+    try:
+        return {"data": HPCConnectionService.test_connection(db, payload)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
