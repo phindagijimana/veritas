@@ -147,7 +147,7 @@ export async function testHpcConnection(payload, timeoutMs = 60000) {
 }
 
 /**
- * POST /api/v1/jobs/submit/{request_id} — Slurm job (SSH/sbatch when HPC_MODE=slurm).
+ * POST /api/v1/jobs/submit/{request_id} — Slurm job (SSH/sbatch; default API mode).
  */
 export async function submitSlurmJob(requestId, body, timeoutMs = 120000) {
   if (!isVeritasApiConfigured()) {
@@ -181,6 +181,85 @@ export async function submitSlurmJob(requestId, body, timeoutMs = 120000) {
   } catch (e) {
     const name = e?.name;
     return { ok: false, message: name === "AbortError" ? "Submit timed out." : e?.message || "Network error" };
+  } finally {
+    done();
+  }
+}
+
+/**
+ * GET /api/v1/requests — evaluation requests for admin.
+ * @returns {Promise<{ ok: true, data: object[] } | { ok: false, message: string, status?: number }>}
+ */
+export async function fetchEvaluationRequests(timeoutMs = 15000) {
+  if (!isVeritasApiConfigured()) {
+    return { ok: false, message: "Set VITE_VERITAS_API_BASE_URL." };
+  }
+  const { signal, done } = abortAfter(timeoutMs);
+  try {
+    const r = await fetch(`${VERITAS_API_BASE_URL}/requests`, {
+      signal,
+      credentials: "omit",
+      headers: { Accept: "application/json" },
+    });
+    const text = await r.text();
+    let j = null;
+    try {
+      j = text ? JSON.parse(text) : null;
+    } catch {
+      j = null;
+    }
+    if (!r.ok) {
+      const detail = j?.detail;
+      let msg;
+      if (typeof detail === "string") msg = detail;
+      else if (Array.isArray(detail)) msg = detail.map((d) => (typeof d === "string" ? d : d?.msg || JSON.stringify(d))).join("; ");
+      else msg = text || r.statusText || `HTTP ${r.status}`;
+      return { ok: false, status: r.status, message: msg };
+    }
+    const list = j?.data;
+    return { ok: true, data: Array.isArray(list) ? list : [] };
+  } catch (e) {
+    return { ok: false, message: e?.name === "AbortError" ? "Timed out." : e?.message || "Network error" };
+  } finally {
+    done();
+  }
+}
+
+/**
+ * POST /api/v1/requests — user submits pipeline + dataset for evaluation (e.g. MELD on IDEAS).
+ * @param {{ datasets: string[], pipeline: string, description?: string|null }} body
+ */
+export async function createEvaluationRequest(body, timeoutMs = 30000) {
+  if (!isVeritasApiConfigured()) {
+    return { ok: false, message: "Set VITE_VERITAS_API_BASE_URL." };
+  }
+  const { signal, done } = abortAfter(timeoutMs);
+  try {
+    const r = await fetch(`${VERITAS_API_BASE_URL}/requests`, {
+      method: "POST",
+      credentials: "omit",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(body),
+      signal,
+    });
+    const text = await r.text();
+    let j = null;
+    try {
+      j = text ? JSON.parse(text) : null;
+    } catch {
+      j = null;
+    }
+    if (!r.ok) {
+      const detail = j?.detail;
+      let msg;
+      if (typeof detail === "string") msg = detail;
+      else if (Array.isArray(detail)) msg = detail.map((d) => (typeof d === "string" ? d : d?.msg || JSON.stringify(d))).join("; ");
+      else msg = text || r.statusText || `HTTP ${r.status}`;
+      return { ok: false, status: r.status, message: msg };
+    }
+    return { ok: true, data: j?.data ?? j };
+  } catch (e) {
+    return { ok: false, message: e?.name === "AbortError" ? "Timed out." : e?.message || "Network error" };
   } finally {
     done();
   }

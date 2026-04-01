@@ -26,6 +26,7 @@ class SchedulerJobBundle:
     runtime_engine: str
     # Inner runtime (e.g. MELD bash); set on preview for inspection.
     pipeline_runtime_script: str | None = None
+    submit_error: str | None = None
 
 
 class HPCSchedulerService:
@@ -70,6 +71,7 @@ class HPCSchedulerService:
             stderr_path=runtime["stderr_path"],
             runtime_engine=self.settings.runtime_engine,
             prologue_sh=self.settings.hpc_job_prologue_sh,
+            meld_license_host_dir=self.settings.meld_license_host_dir,
         )
         result = self.adapter.submit(connection, config=config, script=script, remote_workdir=runtime["remote_workdir"], script_name=runtime["script_name"])
         return SchedulerJobBundle(
@@ -86,6 +88,7 @@ class HPCSchedulerService:
             report_path=plan.report_path,
             runtime_engine=self.settings.runtime_engine,
             pipeline_runtime_script=plan.runtime_command,
+            submit_error=result.submit_error,
         )
 
     def preview(
@@ -127,6 +130,7 @@ class HPCSchedulerService:
             stderr_path=runtime["stderr_path"],
             runtime_engine=self.settings.runtime_engine,
             prologue_sh=self.settings.hpc_job_prologue_sh,
+            meld_license_host_dir=self.settings.meld_license_host_dir,
         )
         return SchedulerJobBundle(
             scheduler_job_id="",
@@ -142,4 +146,5 @@ class HPCSchedulerService:
             report_path=plan.report_path,
             runtime_engine=self.settings.runtime_engine,
             pipeline_runtime_script=plan.runtime_command,
+            submit_error=None,
         )

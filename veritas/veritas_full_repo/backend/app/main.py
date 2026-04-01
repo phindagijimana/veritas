@@ -31,7 +31,7 @@ settings = get_settings()
 # Synced to DB on every startup via _ensure_meld_and_ideas_catalog (existing rows get updated).
 _MELD_GRAPH_FCD_YAML = """name: meld-graph-fcd
 title: MELD Graph FCD (T1w)
-image: docker.io/meldproject/meld_graph:latest
+image: docker.io/phindagijimana321/meld_graph:v2.2.4-nir2
 modality: MRI
 entrypoint: python scripts/new_patient_pipeline/new_pt_pipeline.py
 inputs:
@@ -49,7 +49,7 @@ plugin:
   # Separate FreeSurfer vs MELD images (Slurm script runs the MELD image; FS image is declared for recon / ops).
   containers:
     freesurfer: docker.io/freesurfer/freesurfer:7.4.1
-    meld: docker.io/meldproject/meld_graph:latest
+    meld: docker.io/phindagijimana321/meld_graph:v2.2.4-nir2
   secrets:
     freesurfer_license_file: license.txt
     meld_license_file: meld_license.txt
@@ -58,7 +58,7 @@ plugin:
     MELD_LICENSE: /run/secrets/meld_license.txt
 """
 _MELD_GRAPH_FCD_TITLE = "MELD Graph — FCD lesion (T1w)"
-_MELD_GRAPH_FCD_IMAGE = "docker.io/meldproject/meld_graph:latest"
+_MELD_GRAPH_FCD_IMAGE = "docker.io/phindagijimana321/meld_graph:v2.2.4-nir2"
 _MELD_GRAPH_FCD_DESCRIPTION = (
     "MELD Project FCD classifier. Use with Atlas dataset `ideas`. "
     "Slurm submit: runtime_profile=meld_graph, meld_subject_id=sub-..., dataset ideas. "

@@ -66,7 +66,7 @@ class ContainerRuntimeService:
         *,
         image: str,
         meld_data_dir: str,
-        meld_subject_id: str,
+        meld_subject_ids: list[str],
         meld_session: str | None,
         staged_dataset_path: str | None,
         default_ideas_staging: str,
@@ -76,20 +76,29 @@ class ContainerRuntimeService:
         """
         Bash script: prepare BIDS input under meld_data_dir, run MELD new_pt_pipeline (T1, --fastsurfer).
 
-        Staging resolution:
+        One or more subjects: sequential loop (single Slurm job). Staging resolution:
         1) staged_dataset_path from job payload (literal path on compute node)
         2) else VERITAS_STAGED_DATASET_PATH (exported by Atlas → Veritas staging prep)
         3) else default_ideas_staging (e.g. /ood/share/datasets/ideas)
 
         License files: from `meld_plugin` or parsed from `pipeline_yaml` (`plugin.type: meld_graph`, secrets, container_env).
         """
+        subs: list[str] = []
+        for raw in meld_subject_ids:
+            if not raw or not str(raw).strip():
+                continue
+            sub = str(raw).strip()
+            if not sub.startswith("sub-"):
+                sub = f"sub-{sub}"
+            subs.append(sub)
+        if not subs:
+            raise ValueError("meld_subject_ids must contain at least one subject")
+
         plugin = meld_plugin if meld_plugin is not None else parse_meld_plugin_config(pipeline_yaml)
         engine = self.settings.runtime_engine
-        exec_image = ((plugin.meld_image or "").strip() or image).strip()
+        # Slurm submit `pipeline` must win over catalog YAML plugin.containers.meld (explicit image choice).
+        exec_image = ((image or "").strip() or (plugin.meld_image or "").strip())
         oci_ref = _oci_image_ref(exec_image)
-        sub = meld_subject_id.strip()
-        if not sub.startswith("sub-"):
-            sub = f"sub-{sub}"
 
         t1_cfg = {"T1": {"session": meld_session, "datatype": "anat", "suffix": "T1w"}}
         bids_json = json.dumps(t1_cfg, indent=2)
@@ -104,7 +113,6 @@ class ContainerRuntimeService:
             staging_line = f'STAGING_ROOT="${{VERITAS_STAGED_DATASET_PATH:-{fallback}}}"'
 
         meld_q = shlex.quote(meld_data_dir)
-        sub_q = shlex.quote(sub)
         img_q = shlex.quote(exec_image)
         fs_b = shlex.quote(plugin.freesurfer_license_file)
         meld_b = shlex.quote(plugin.meld_license_file)
@@ -114,12 +122,16 @@ class ContainerRuntimeService:
         lines: list[str] = [
             "#!/usr/bin/env bash",
             "# Veritas MELD Graph runtime (T1w, Atlas/IDEAS staging; YAML plugin secrets)",
+            "# Subjects: sequential loop in one Slurm allocation",
             "set -euo pipefail",
             staging_line,
             f"export MELD_DATA={meld_q}",
-            f"SUB={sub_q}",
             f"IMAGE={img_q}",
         ]
+        lines.append("SUBJECTS=(")
+        for s in subs:
+            lines.append(f"  {shlex.quote(s)}")
+        lines.append(")")
         if plugin.freesurfer_image and str(plugin.freesurfer_image).strip():
             lines.append(f'FREESURFER_IMAGE={shlex.quote(str(plugin.freesurfer_image).strip())}')
         lines.extend(
@@ -140,19 +152,41 @@ class ContainerRuntimeService:
                 '  echo "Missing FreeSurfer or MELD license under $LICENSE_DIR (see pipeline YAML plugin.secrets)." >&2',
                 "  exit 1",
                 "fi",
-                'mkdir -p "$MELD_DATA/input"',
-                'if [[ ! -d "$STAGING_ROOT/$SUB" ]]; then',
-                '  echo "BIDS subject not found: $STAGING_ROOT/$SUB (Atlas staging / IDEAS path)." >&2',
-                "  exit 1",
-                "fi",
-                'ln -sfn "$STAGING_ROOT/$SUB" "$MELD_DATA/input/$SUB"',
-                'cat > "$MELD_DATA/input/meld_bids_config.json" << \'MELD_BIDS_CFG\'',
+                'for SUB in "${SUBJECTS[@]}"; do',
+                '  echo "=== Veritas MELD: $SUB ==="',
+                '  mkdir -p "$MELD_DATA/input"',
+                '  rm -rf "$MELD_DATA/input"/*',
+                # BIDS folders may be sub-1 or sub-01; resolve to the path that exists on STAGING_ROOT.
+                '  if [[ ! -d "$STAGING_ROOT/$SUB" ]]; then',
+                '    _nid="${SUB#sub-}"',
+                '    if [[ "$_nid" =~ ^[0-9]+$ ]]; then',
+                '      _canon="sub-$((10#$_nid))"',
+                '      if [[ -d "$STAGING_ROOT/$_canon" ]]; then',
+                '        SUB="$_canon"',
+                '      fi',
+                '    fi',
+                '  fi',
+                '  if [[ ! -d "$STAGING_ROOT/$SUB" ]]; then',
+                '    _nid="${SUB#sub-}"',
+                '    if [[ "$_nid" =~ ^[0-9]+$ ]]; then',
+                '      _padded="sub-$(printf "%02d" "$((10#$_nid))")"',
+                '      if [[ -d "$STAGING_ROOT/$_padded" ]]; then',
+                '        SUB="$_padded"',
+                '      fi',
+                '    fi',
+                '  fi',
+                '  if [[ ! -d "$STAGING_ROOT/$SUB" ]]; then',
+                '    echo "BIDS subject not found: $STAGING_ROOT/$SUB (Atlas staging / IDEAS path)." >&2',
+                "    exit 1",
+                "  fi",
+                '  ln -sfn "$STAGING_ROOT/$SUB" "$MELD_DATA/input/$SUB"',
+                '  cat > "$MELD_DATA/input/meld_bids_config.json" << \'MELD_BIDS_CFG\'',
                 bids_json,
                 "MELD_BIDS_CFG",
-                'cat > "$MELD_DATA/input/dataset_description.json" << \'MELD_DS_DESC\'',
+                '  cat > "$MELD_DATA/input/dataset_description.json" << \'MELD_DS_DESC\'',
                 ds_desc,
                 "MELD_DS_DESC",
-                'export DOCKER_USER="${DOCKER_USER:-$(id -u):$(id -g)}"',
+                '  export DOCKER_USER="${DOCKER_USER:-$(id -u):$(id -g)}"',
             ]
         )
 
@@ -160,30 +194,42 @@ class ContainerRuntimeService:
 
         if _is_oci(engine):
             cli = _oci_cli(engine)
+            # exec (not run): run invokes the image ENTRYPOINT (e.g. entrypoint.sh); we need the same as
+            # `docker run … python …`. --nv: GPU (FastSurfer). Apptainer avoids Docker/Podman /run/user issues.
+            # MELD image WORKDIR is /app (see upstream Dockerfile); apptainer exec inherits host cwd — cd first.
+            meld_py = (
+                'bash -c "cd /app && python scripts/new_patient_pipeline/new_pt_pipeline.py '
+                '-id \\"$SUB\\" --fastsurfer"'
+            )
             lines.extend(
                 [
-                    f"{cli} run --cleanenv \\",
-                    '  --env FS_LICENSE="$FS_LICENSE_CONTAINER" \\',
-                    '  --env MELD_LICENSE="$MELD_LICENSE_CONTAINER" \\',
-                    '  -B "$MELD_DATA:/data" \\',
-                    '  -B "$LICENSE_DIR/$FS_LICENSE_FILE:$FS_LICENSE_CONTAINER:ro" \\',
-                    '  -B "$LICENSE_DIR/$MELD_LICENSE_FILE:$MELD_LICENSE_CONTAINER:ro" \\',
-                    f"  {oci_ref_q} \\",
-                    '  python scripts/new_patient_pipeline/new_pt_pipeline.py -id "$SUB" --fastsurfer',
+                    f"  {cli} exec --cleanenv --nv \\",
+                    '    --env FS_LICENSE="$FS_LICENSE_CONTAINER" \\',
+                    '    --env MELD_LICENSE="$MELD_LICENSE_CONTAINER" \\',
+                    '    -B "$MELD_DATA:/data" \\',
+                    '    -B "$LICENSE_DIR/$FS_LICENSE_FILE:$FS_LICENSE_CONTAINER:ro" \\',
+                    '    -B "$LICENSE_DIR/$MELD_LICENSE_FILE:$MELD_LICENSE_CONTAINER:ro" \\',
+                    f"    {oci_ref_q} \\",
+                    f"    {meld_py}",
                 ]
             )
         else:
+            meld_py = (
+                'bash -c "cd /app && python scripts/new_patient_pipeline/new_pt_pipeline.py '
+                '-id \\"$SUB\\" --fastsurfer"'
+            )
             lines.extend(
                 [
-                    'docker run --rm --user "$DOCKER_USER" \\',
-                    '  -v "$MELD_DATA:/data" \\',
-                    '  -v "$LICENSE_DIR/$FS_LICENSE_FILE:$FS_LICENSE_CONTAINER:ro" \\',
-                    '  -v "$LICENSE_DIR/$MELD_LICENSE_FILE:$MELD_LICENSE_CONTAINER:ro" \\',
-                    '  -e FS_LICENSE="$FS_LICENSE_CONTAINER" \\',
-                    '  -e MELD_LICENSE="$MELD_LICENSE_CONTAINER" \\',
-                    '  "$IMAGE" \\',
-                    '  python scripts/new_patient_pipeline/new_pt_pipeline.py -id "$SUB" --fastsurfer',
+                    '  docker run --rm --user "$DOCKER_USER" \\',
+                    '    -v "$MELD_DATA:/data" \\',
+                    '    -v "$LICENSE_DIR/$FS_LICENSE_FILE:$FS_LICENSE_CONTAINER:ro" \\',
+                    '    -v "$LICENSE_DIR/$MELD_LICENSE_FILE:$MELD_LICENSE_CONTAINER:ro" \\',
+                    '    -e FS_LICENSE="$FS_LICENSE_CONTAINER" \\',
+                    '    -e MELD_LICENSE="$MELD_LICENSE_CONTAINER" \\',
+                    '    "$IMAGE" \\',
+                    f"    {meld_py}",
                 ]
             )
+        lines.append("done")
 
         return "\n".join(lines) + "\n"

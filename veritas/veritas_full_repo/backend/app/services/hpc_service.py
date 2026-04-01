@@ -15,7 +15,7 @@ class HPCConnectionService:
     def connect(db: Session, config: HPCConnectionConfig, persist: bool = True) -> HPCConnection:
         """
         Validate SSH with Paramiko (real connection), then optionally persist as active HPC.
-        Does not use the mock Slurm adapter — you get a true SSH check even when HPC_MODE=mock.
+        Uses Paramiko directly for SSH validation (not the Slurm submit adapter), so this is a real SSH check regardless of HPC_MODE.
         """
         key_ref = config.ssh_key_reference or config.key_path
         item = HPCConnection(

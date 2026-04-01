@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 import shlex
-import textwrap
 
 from app.core.config import get_settings
 from app.models.hpc_connection import HPCConnection
@@ -18,6 +18,7 @@ class SubmitResult:
     status: str
     script: str
     launch_command: str
+    submit_error: str | None = None
 
 
 @dataclass
@@ -95,22 +96,35 @@ class SlurmHPCAdapter:
         q_dir = shell_double_quote(rw)
         q_script = shell_double_quote(script_path)
         mkdir_cmd = f"mkdir -p {q_dir}"
-        heredoc = textwrap.dedent(f"""
-        cat > {q_script} <<'EOF'
-        {script}
-        EOF
-        chmod +x {q_script}
-        """).strip()
+        # Delimiter must not appear inside `script` (generated sbatch embeds `cat <<'EOF'` blocks).
+        hd = "VERITAS_SBATCH_SCRIPT_EOF"
+        heredoc = (
+            f"cat > {q_script} <<'{hd}'\n"
+            f"{script}\n"
+            f"{hd}\n"
+            f"chmod +x {q_script}\n"
+        )
         submit_cmd = f"cd {q_dir} && sbatch {shlex.quote(script_name)}"
         self.ssh.run(connection, mkdir_cmd)
         self.ssh.run(connection, heredoc)
         result = self.ssh.run(connection, submit_cmd)
-        scheduler_job_id = self._parse_job_id(result.stdout)
+        scheduler_job_id = self._parse_job_id(result.stdout + "\n" + result.stderr)
+        err_parts = []
+        if result.exit_code != 0:
+            err_parts.append(f"exit {result.exit_code}")
+        if result.stderr:
+            err_parts.append(result.stderr.strip())
+        if not scheduler_job_id and result.stdout:
+            err_parts.append(f"stdout: {result.stdout.strip()}")
+        submit_error = "; ".join(err_parts) if err_parts and not scheduler_job_id else None
+        if not scheduler_job_id and not submit_error:
+            submit_error = "sbatch produced no job id (empty stdout/stderr)"
         return SubmitResult(
             scheduler_job_id=scheduler_job_id,
             status="queued" if scheduler_job_id else "failed",
             script=script,
             launch_command=submit_cmd,
+            submit_error=submit_error,
         )
 
     def summary(self, connection: HPCConnection | None) -> QueueSummary:
@@ -142,7 +156,13 @@ class SlurmHPCAdapter:
 
     @staticmethod
     def _parse_job_id(output: str) -> str:
-        tokens = output.strip().split()
+        if not output or not str(output).strip():
+            return ""
+        text = str(output).strip()
+        m = re.search(r"Submitted batch job (\d+)", text, re.IGNORECASE)
+        if m:
+            return m.group(1)
+        tokens = text.split()
         return tokens[-1] if tokens and tokens[-1].isdigit() else ""
 
 

@@ -5,7 +5,7 @@
 
 name: meld-graph-fcd
 title: MELD Graph FCD (T1w)
-image: docker.io/meldproject/meld_graph:latest
+image: docker.io/phindagijimana321/meld_graph:v2.2.4-nir2
 modality: MRI
 entrypoint: python scripts/new_patient_pipeline/new_pt_pipeline.py
 inputs:
@@ -22,7 +22,7 @@ plugin:
   type: meld_graph
   containers:
     freesurfer: docker.io/freesurfer/freesurfer:7.4.1
-    meld: docker.io/meldproject/meld_graph:latest
+    meld: docker.io/phindagijimana321/meld_graph:v2.2.4-nir2
   secrets:
     freesurfer_license_file: license.txt
     meld_license_file: meld_license.txt

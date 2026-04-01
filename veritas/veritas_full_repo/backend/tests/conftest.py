@@ -30,6 +30,7 @@ else:
     os.environ.setdefault("DATABASE_AUTO_CREATE_SCHEMA", "false")
 
 os.environ["SEED_DEMO_DATA_ON_STARTUP"] = "false"
+# Default API is slurm; tests use mock so job submit does not require a cluster.
 os.environ.setdefault("HPC_MODE", "mock")
 os.environ.setdefault("APP_ENV", "development")
 os.environ.setdefault("CELERY_TASK_ALWAYS_EAGER", "true")

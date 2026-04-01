@@ -24,7 +24,7 @@ def test_submit_job_returns_scheduler_identifier(client):
 def test_submit_meld_pipeline_requires_subject(client):
     payload = {
         "job_name": "meld-ideas",
-        "pipeline": "meldproject/meld_graph:latest",
+        "pipeline": "docker.io/phindagijimana321/meld_graph:v2.2.4-nir2",
         "dataset": "ideas",
         "partition": "gpu",
         "runtime_profile": "meld_graph",
@@ -43,7 +43,7 @@ def test_submit_meld_pipeline_requires_subject(client):
 def test_submit_meld_pipeline_ok(client):
     payload = {
         "job_name": "meld-ideas",
-        "pipeline": "meldproject/meld_graph:latest",
+        "pipeline": "docker.io/phindagijimana321/meld_graph:v2.2.4-nir2",
         "dataset": "ideas",
         "partition": "gpu",
         "runtime_profile": "meld_graph",

@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   connectHpc,
+  createEvaluationRequest,
+  fetchEvaluationRequests,
   fetchHpcSummary,
   fetchPipelines,
   previewSlurmJob,
@@ -74,6 +76,22 @@ const SLURM_PRESETS = [
   "CPU Only • 16 CPU • 64 GB RAM",
 ];
 
+/** One BIDS subject id per line, or comma-separated (whitespace trimmed). */
+function parseMeldBatchSubjects(text) {
+  return String(text || "")
+    .split(/[\n,]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function meldSubjectsValid(slurmForm) {
+  if ((slurmForm.runtime_profile || "generic") !== "meld_graph") return true;
+  if (slurmForm.meld_subject_mode === "batch") {
+    return parseMeldBatchSubjects(slurmForm.meld_subject_batch || "").length > 0;
+  }
+  return Boolean(String(slurmForm.meld_subject_id || "").trim());
+}
+
 /** Maps admin Slurm form fields to POST /jobs/preview|submit JSON (SlurmJobSubmitRequest). */
 function buildSlurmSubmitPayload(slurmForm) {
   const gpu = parseInt(String(slurmForm.gpus), 10);
@@ -99,8 +117,13 @@ function buildSlurmSubmitPayload(slurmForm) {
   const pn = slurmForm.pipeline_name.trim();
   if (pn) payload.pipeline_name = pn;
   if (rp === "meld_graph") {
-    const sid = slurmForm.meld_subject_id.trim();
-    if (sid) payload.meld_subject_id = sid;
+    if (slurmForm.meld_subject_mode === "batch") {
+      const ids = parseMeldBatchSubjects(slurmForm.meld_subject_batch || "");
+      if (ids.length) payload.meld_subject_ids = ids;
+    } else {
+      const sid = String(slurmForm.meld_subject_id || "").trim();
+      if (sid) payload.meld_subject_id = sid;
+    }
   }
   return payload;
 }
@@ -118,12 +141,12 @@ function buildHpcConnectPayload(hpcForm) {
 }
 
 const DATASETS = [
+  { name: "ideas", label: "ideas (IDEAS)", disease: "Epilepsy", biomarker: "FCD / MELD", code: "IDEAS", version: "v1", subjects: 0, source: "Atlas (public)", qc: "validated" },
   { name: "HS Dataset", disease: "Epilepsy", biomarker: "HS", code: "ATLAS-HS-1", version: "v1", subjects: 212, source: "Atlas / Pennsieve", qc: "validated" },
   { name: "FCD Dataset", disease: "Epilepsy", biomarker: "FCD", code: "ATLAS-FCD-1", version: "v2", subjects: 184, source: "Atlas / Pennsieve", qc: "validated" },
   { name: "Alzheimer Dataset", disease: "Alzheimer", biomarker: "AD", code: "ATLAS-AD-1", version: "v3", subjects: 420, source: "Atlas / Pennsieve", qc: "validated" },
   { name: "TSC Dataset", disease: "TSC", biomarker: "TSC", code: "ATLAS-TSC-1", version: "v1", subjects: 96, source: "Atlas / Pennsieve", qc: "pilot" },
   { name: "Epilepsy Dataset", disease: "Epilepsy", biomarker: "General", code: "ATLAS-EPI-1", version: "v1", subjects: 510, source: "Atlas / Pennsieve", qc: "validated" },
-  { name: "ideas (IDEAS)", disease: "Epilepsy", biomarker: "FCD / MELD", code: "IDEAS", version: "v1", subjects: 0, source: "Atlas (public)", qc: "validated" },
 ];
 
 const REQUESTS = [
@@ -180,7 +203,7 @@ const REQUESTS = [
     user: "Dr. Kim",
     requesterEmail: "kim@neuro.edu",
     datasets: "ideas (IDEAS)",
-    pipeline: "docker.io/meldproject/meld_graph:latest",
+    pipeline: "docker.io/phindagijimana321/meld_graph:v2.2.4-nir2",
     phase: "Pipeline Prep",
     report: "Not Ready",
     submitted: "2026-03-14 08:00",
@@ -192,6 +215,47 @@ const REQUESTS = [
     bundle: "EVB-REQ-1045",
   },
 ];
+
+function formatApiSubmittedAt(iso) {
+  if (!iso) return "—";
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return String(iso);
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  } catch {
+    return "—";
+  }
+}
+
+function mapApiPhaseToTable(phase) {
+  const p = String(phase || "").trim();
+  if (p === "Submitted") return "Pipeline Prep";
+  return p || "Pipeline Prep";
+}
+
+function apiRequestToRow(item) {
+  const ds = Array.isArray(item.datasets) ? item.datasets.join(", ") : String(item.datasets || "");
+  const ideas =
+    (Array.isArray(item.datasets) && item.datasets.some((x) => String(x).toLowerCase().includes("ideas"))) ||
+    ds.toLowerCase().includes("ideas");
+  return {
+    id: item.id,
+    user: item.submitted_by || "Researcher",
+    requesterEmail: item.submitted_by || "—",
+    datasets: ds,
+    pipeline: item.pipeline || "—",
+    phase: mapApiPhaseToTable(item.current_phase),
+    report: item.report_status || "Pending",
+    submitted: formatApiSubmittedAt(item.submitted_at),
+    admin_note: item.admin_note || "",
+    atlasId: ideas ? "ideas" : "dataset",
+    approval: "approved",
+    staging: "not_started",
+    hiddenTest: "not_started",
+    bundle: `EVB-${item.id}`,
+  };
+}
 
 const LEADERBOARD = {
   HS: [
@@ -336,7 +400,10 @@ function SelectField({ label, options, value, onChange, className = "" }) {
       <select className={`w-full rounded-xl border bg-white px-3 py-2 text-sm outline-none ${className}`} style={{ borderColor: COLORS.line, color: COLORS.text }} value={value} onChange={onChange}>
         {options.map((option) => {
           const optionValue = typeof option === "string" ? option : option.name;
-          return <option key={optionValue} value={optionValue}>{optionValue}</option>;
+          const optionLabel = typeof option === "string" ? option : (option.label ?? option.name);
+          return (
+            <option key={optionValue} value={optionValue}>{optionLabel}</option>
+          );
         })}
       </select>
     </div>
@@ -373,13 +440,20 @@ export default function VeritasApp() {
   const [reportStatus, setReportStatus] = useState(null);
   const [requests, setRequests] = useState(REQUESTS);
   const [selectedRequestId, setSelectedRequestId] = useState(REQUESTS[0].id);
-  const selectedRequest = useMemo(
-    () => requests.find((r) => r.id === selectedRequestId) ?? requests[0],
-    [requests, selectedRequestId],
-  );
-  const [selectedDataset, setSelectedDataset] = useState(DATASETS[0].name);
+  const selectedRequest = useMemo(() => {
+    if (!requests.length) return null;
+    return requests.find((r) => r.id === selectedRequestId) ?? requests[0];
+  }, [requests, selectedRequestId]);
+  const [selectedDataset, setSelectedDataset] = useState("ideas");
   const [selectedPipeline, setSelectedPipeline] = useState("registry/org/hsnet:1.0");
-  const [requestForm, setRequestForm] = useState({ dataset: DATASETS[0].name, pipeline: "registry/org/model:1.0", description: "Evaluate hippocampal sclerosis biomarker pipeline." });
+  const [requestForm, setRequestForm] = useState({
+    dataset: "ideas",
+    pipeline: "docker.io/phindagijimana321/meld_graph:v2.2.4-nir2",
+    description: "MELD Graph evaluation on IDEAS cohort.",
+  });
+  const [userPhase, setUserPhase] = useState("Pipeline Prep");
+  const [userRequestSubmit, setUserRequestSubmit] = useState({ loading: false, error: null, success: null });
+  const [requestsFetchError, setRequestsFetchError] = useState(null);
   const [pipelineDraft, setPipelineDraft] = useState({
     name: "my-biomarker",
     title: "My biomarker pipeline",
@@ -410,20 +484,41 @@ export default function VeritasApp() {
     constraint: "a100",
     sbatch_overrides: "#SBATCH --gres=gpu:1\n#SBATCH --cpus-per-task=16\n#SBATCH --mem=64G",
     dataset: "ideas",
-    pipeline_image: "docker.io/meldproject/meld_graph:latest",
+    pipeline_image: "docker.io/phindagijimana321/meld_graph:v2.2.4-nir2",
     pipeline_name: "meld-graph-fcd",
     runtime_profile: "generic",
+    meld_subject_mode: "single",
     meld_subject_id: "",
+    meld_subject_batch: "sub-01\nsub-02\nsub-03",
   });
   const [jobPreview, setJobPreview] = useState({ loading: false, error: null, data: null });
   const [slurmPreviewTab, setSlurmPreviewTab] = useState("sbatch");
-  const [adminNote, setAdminNote] = useState(REQUESTS[0].admin_note);
+  const [adminNote, setAdminNote] = useState(REQUESTS[0]?.admin_note ?? "");
   const [reportForm, setReportForm] = useState({ subject: "", body: "" });
   const [pipelinesLive, setPipelinesLive] = useState(null);
 
   useEffect(() => {
-    setAdminNote(selectedRequest.admin_note);
+    setAdminNote(selectedRequest?.admin_note ?? "");
   }, [selectedRequest]);
+
+  useEffect(() => {
+    if (page !== "admin" || !isVeritasApiConfigured()) return;
+    let cancelled = false;
+    setRequestsFetchError(null);
+    fetchEvaluationRequests().then((res) => {
+      if (cancelled) return;
+      if (!res.ok) {
+        setRequestsFetchError(res.message);
+        return;
+      }
+      const rows = (res.data || []).map(apiRequestToRow);
+      setRequests(rows);
+      if (rows.length) setSelectedRequestId(rows[0].id);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [page]);
 
   useEffect(() => {
     if (page !== "pipeline" || !isVeritasApiConfigured()) return;
@@ -458,7 +553,13 @@ export default function VeritasApp() {
     () => apiInquiries.find((r) => r.id === selectedInquiryId) ?? null,
     [apiInquiries, selectedInquiryId],
   );
-  const phaseIndex = USER_PHASES.indexOf(selectedRequest.phase);
+  const phaseIndex = useMemo(() => {
+    if (page === "user") {
+      const i = USER_PHASES.indexOf(userPhase);
+      return i >= 0 ? i : 0;
+    }
+    return Math.max(0, USER_PHASES.indexOf(selectedRequest?.phase ?? ""));
+  }, [page, userPhase, selectedRequest]);
 
   const activeHpc = useMemo(() => hpcSummary?.active_connection?.status === "connected", [hpcSummary]);
   const slurmSubmitBlocked = useMemo(() => hpcSummary?.hpc_mode === "slurm" && !activeHpc, [hpcSummary, activeHpc]);
@@ -472,7 +573,7 @@ export default function VeritasApp() {
 # Outputs: lesion predictions and metrics under the job artifact layout.
 name: ${n}
 title: ${pipelineDraft.title || "MELD Graph FCD (T1w)"}
-image: ${pipelineDraft.image || "docker.io/meldproject/meld_graph:latest"}
+image: ${pipelineDraft.image || "docker.io/phindagijimana321/meld_graph:v2.2.4-nir2"}
 modality: MRI
 entrypoint: python scripts/new_patient_pipeline/new_pt_pipeline.py
 inputs:
@@ -489,7 +590,7 @@ plugin:
   type: meld_graph
   containers:
     freesurfer: docker.io/freesurfer/freesurfer:7.4.1
-    meld: docker.io/meldproject/meld_graph:latest
+    meld: docker.io/phindagijimana321/meld_graph:v2.2.4-nir2
   secrets:
     freesurfer_license_file: license.txt
     meld_license_file: meld_license.txt
@@ -530,6 +631,34 @@ reports:
     if (res.ok) setHpcSummary(res.data);
     else setHpcSummaryError(res.message);
   }, []);
+
+  const submitUserEvaluationRequest = useCallback(async () => {
+    if (!isVeritasApiConfigured()) {
+      setUserRequestSubmit({
+        loading: false,
+        error: "Set VITE_VERITAS_API_BASE_URL (e.g. /api/v1 for the Vite proxy).",
+        success: null,
+      });
+      return;
+    }
+    const pipeline = (requestForm.pipeline || "").trim();
+    if (!pipeline) {
+      setUserRequestSubmit({ loading: false, error: "Enter a container image (Docker/OCI reference).", success: null });
+      return;
+    }
+    setUserRequestSubmit({ loading: true, error: null, success: null });
+    const res = await createEvaluationRequest({
+      datasets: [requestForm.dataset],
+      pipeline,
+      description: (requestForm.description || "").trim() || null,
+    });
+    if (!res.ok) {
+      setUserRequestSubmit({ loading: false, error: res.message, success: null });
+      return;
+    }
+    setUserPhase(mapApiPhaseToTable(res.data?.current_phase));
+    setUserRequestSubmit({ loading: false, error: null, success: res.data?.id || "Request created" });
+  }, [requestForm]);
 
   useEffect(() => {
     if (page !== "admin" || !isVeritasApiConfigured()) return;
@@ -955,8 +1084,36 @@ reports:
               </div>
               <div className="grid gap-4 lg:grid-cols-2">
                 <SelectField label="Dataset" options={DATASETS} value={requestForm.dataset} onChange={(e) => { setRequestForm({ ...requestForm, dataset: e.target.value }); setSelectedDataset(e.target.value); }} className="lg:col-span-2" />
-                <TextField label="Packaged Pipeline" placeholder="docker.io/meldproject/meld_graph:latest" value={requestForm.pipeline} onChange={(e) => setRequestForm({ ...requestForm, pipeline: e.target.value })} className="lg:col-span-2" />
+                <TextField label="Packaged Pipeline" placeholder="docker.io/phindagijimana321/meld_graph:v2.2.4-nir2" value={requestForm.pipeline} onChange={(e) => setRequestForm({ ...requestForm, pipeline: e.target.value })} className="lg:col-span-2" />
                 <TextField label="Description" placeholder="Brief purpose / hypothesis" textarea className="min-h-[110px] lg:col-span-2" value={requestForm.description} onChange={(e) => setRequestForm({ ...requestForm, description: e.target.value })} />
+              </div>
+              {userRequestSubmit.error ? (
+                <p className="mt-4 text-sm text-red-700" role="alert">
+                  {userRequestSubmit.error}
+                </p>
+              ) : null}
+              {userRequestSubmit.success ? (
+                <div className="mt-4 rounded-2xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-900" role="status">
+                  Evaluation request <span className="font-mono font-semibold">{userRequestSubmit.success}</span> was created. Operators see it under{" "}
+                  <strong>Veritas admin → Submitted requests</strong> (GET <code className="rounded bg-white px-1 text-xs">/api/v1/requests</code>
+                  ). Connect to HPC there, then preview or submit the Slurm job.
+                </div>
+              ) : null}
+              <div className="mt-5 flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  disabled={userRequestSubmit.loading || !isVeritasApiConfigured()}
+                  onClick={submitUserEvaluationRequest}
+                  className="rounded-full px-6 py-3 text-sm font-medium text-white disabled:opacity-50"
+                  style={{ backgroundColor: COLORS.navy }}
+                >
+                  {userRequestSubmit.loading ? "Submitting…" : "Submit evaluation request"}
+                </button>
+                {!isVeritasApiConfigured() ? (
+                  <span className="text-xs" style={{ color: COLORS.muted }}>
+                    Set <code className="rounded bg-slate-100 px-1">VITE_VERITAS_API_BASE_URL</code> to call the API.
+                  </span>
+                ) : null}
               </div>
             </Card>
             <Card className="p-5 sm:p-6 xl:col-span-5">
@@ -968,7 +1125,7 @@ reports:
             <Card className="p-5 sm:p-6 xl:col-span-12">
               <h3 className="text-base font-semibold" style={{ color: COLORS.text }}>MELD Graph (example)</h3>
               <ul className="mt-3 list-disc space-y-2 pl-5 text-sm leading-relaxed" style={{ color: COLORS.muted }}>
-                <li><span style={{ color: COLORS.text }}>Container:</span> e.g. <code className="rounded bg-slate-100 px-1 text-xs">docker.io/meldproject/meld_graph:latest</code> (plus FreeSurfer sidecar in YAML).</li>
+                <li><span style={{ color: COLORS.text }}>Container:</span> e.g. <code className="rounded bg-slate-100 px-1 text-xs">docker.io/phindagijimana321/meld_graph:v2.2.4-nir2</code> (plus FreeSurfer sidecar in YAML).</li>
                 <li><span style={{ color: COLORS.text }}>Inputs:</span> BIDS dataset with T1w anatomical; IDEAS cohort uses dataset id <code className="rounded bg-slate-100 px-1 text-xs">ideas</code> and staging to the cluster.</li>
                 <li><span style={{ color: COLORS.text }}>Outputs:</span> predictions and metrics paths defined in YAML; Veritas maps them to reports for the requester.</li>
                 <li><span style={{ color: COLORS.text }}>Licenses:</span> FreeSurfer <code className="rounded bg-slate-100 px-1 text-xs">license.txt</code> and MELD <code className="rounded bg-slate-100 px-1 text-xs">meld_license.txt</code> on the host; mounted read-only in the job script.</li>
@@ -1099,8 +1256,13 @@ reports:
         <PageShell>
           <SectionTitle
             title="Veritas admin"
-            subtitle="Flow: the user submitted a pipeline image from their dashboard; you registered YAML (MELD or generic) in the catalog. Connect to your cluster over SSH, then preview or submit Slurm jobs for the selected evaluation request. Set HPC_MODE=slurm on the API for real sbatch; mock mode still exercises the API without SSH."
+            subtitle="Flow: the user submitted a pipeline image from their dashboard; you registered YAML (MELD or generic) in the catalog. Connect to your cluster over SSH, then preview or submit Slurm jobs for the selected evaluation request. The API defaults to Slurm (real sbatch); use HPC_MODE=mock only for offline tests."
           />
+          {requestsFetchError && isVeritasApiConfigured() ? (
+            <div className="mb-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950" role="alert">
+              Could not load requests: {requestsFetchError}
+            </div>
+          ) : null}
           {reportStatus ? (
             <div className="mb-5 rounded-2xl border px-4 py-3 text-sm" style={{ borderColor: "#bbf7d0", backgroundColor: "#ecfdf3", color: "#166534" }}>
               {reportStatus}
@@ -1112,7 +1274,7 @@ reports:
                 <div>
                   <h3 className="text-lg font-semibold" style={{ color: COLORS.text }}>HPC connection</h3>
                   <p className="mt-1 text-sm" style={{ color: COLORS.muted }}>
-                    Uses <code className="rounded bg-white px-1 text-xs">POST /api/v1/hpc/connect</code> (Paramiko SSH). {hpcSummary?.hpc_mode === "slurm" ? "API is in Slurm mode — sbatch runs on this host." : "API is in mock mode — jobs are simulated unless you set HPC_MODE=slurm."}
+                    Uses <code className="rounded bg-white px-1 text-xs">POST /api/v1/hpc/connect</code> (Paramiko SSH). {hpcSummary?.hpc_mode === "slurm" ? "Slurm mode — sbatch runs on the cluster after connect." : "Simulation mode (HPC_MODE=mock) — no real sbatch."}
                   </p>
                 </div>
                 <span
@@ -1180,135 +1342,154 @@ reports:
                     </tr>
                   </thead>
                   <tbody>
-                    {requests.map((row, idx) => {
-                      const active = selectedRequestId === row.id;
-                      return (
-                        <tr
-                          key={row.id}
-                          onClick={() => setSelectedRequestId(row.id)}
-                          className={idx < requests.length - 1 ? "border-b" : ""}
-                          style={{
-                            borderColor: COLORS.line,
-                            cursor: "pointer",
-                            backgroundColor: active ? "#eff6ff" : undefined,
-                          }}
-                        >
-                          <td className="px-4 py-3 font-mono text-xs" style={{ color: COLORS.navy }}>
-                            {row.id}
-                          </td>
-                          <td className="px-4 py-3" style={{ color: COLORS.text }}>
-                            {row.user}
-                            <div className="text-xs" style={{ color: COLORS.muted }}>
-                              {row.requesterEmail}
-                            </div>
-                          </td>
-                          <td className="px-4 py-3" style={{ color: COLORS.muted }}>
-                            {row.datasets}
-                          </td>
-                          <td className="px-4 py-3" style={{ color: COLORS.text }}>
-                            {row.phase}
-                          </td>
-                          <td className="px-4 py-3">
-                            <span
-                              className="rounded-full border px-2 py-0.5 text-xs font-medium"
-                              style={{
-                                borderColor: COLORS.line,
-                                backgroundColor: row.report === "Ready" ? "#ecfdf3" : COLORS.soft,
-                                color: row.report === "Ready" ? "#166534" : COLORS.muted,
-                              }}
-                            >
-                              {row.report}
-                            </span>
-                          </td>
-                        </tr>
-                      );
-                    })}
+                    {requests.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="px-4 py-8 text-center text-sm" style={{ color: COLORS.muted }}>
+                          No evaluation requests yet. When <code className="rounded bg-slate-100 px-1 text-xs">VITE_VERITAS_API_BASE_URL</code> points at the API, this list loads from{" "}
+                          <code className="rounded bg-slate-100 px-1 text-xs">GET /api/v1/requests</code> (user submissions from the dashboard).
+                        </td>
+                      </tr>
+                    ) : (
+                      requests.map((row, idx) => {
+                        const active = selectedRequestId === row.id;
+                        return (
+                          <tr
+                            key={row.id}
+                            onClick={() => setSelectedRequestId(row.id)}
+                            className={idx < requests.length - 1 ? "border-b" : ""}
+                            style={{
+                              borderColor: COLORS.line,
+                              cursor: "pointer",
+                              backgroundColor: active ? "#eff6ff" : undefined,
+                            }}
+                          >
+                            <td className="px-4 py-3 font-mono text-xs" style={{ color: COLORS.navy }}>
+                              {row.id}
+                            </td>
+                            <td className="px-4 py-3" style={{ color: COLORS.text }}>
+                              {row.user}
+                              <div className="text-xs" style={{ color: COLORS.muted }}>
+                                {row.requesterEmail}
+                              </div>
+                            </td>
+                            <td className="px-4 py-3" style={{ color: COLORS.muted }}>
+                              {row.datasets}
+                            </td>
+                            <td className="px-4 py-3" style={{ color: COLORS.text }}>
+                              {row.phase}
+                            </td>
+                            <td className="px-4 py-3">
+                              <span
+                                className="rounded-full border px-2 py-0.5 text-xs font-medium"
+                                style={{
+                                  borderColor: COLORS.line,
+                                  backgroundColor: row.report === "Ready" ? "#ecfdf3" : COLORS.soft,
+                                  color: row.report === "Ready" ? "#166534" : COLORS.muted,
+                                }}
+                              >
+                                {row.report}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
                   </tbody>
                 </table>
               </div>
             </Card>
 
             <Card className="p-5 sm:p-6 xl:col-span-12">
-              <div className="grid gap-8 lg:grid-cols-2">
-                <div>
-                  <h3 className="text-lg font-semibold" style={{ color: COLORS.text }}>
-                    Selected request · {selectedRequest.id}
-                  </h3>
-                  <p className="mt-2 text-sm" style={{ color: COLORS.muted }}>
-                    Pipeline <code className="rounded bg-slate-100 px-1 text-xs">{selectedRequest.pipeline}</code>
-                  </p>
-                  <TextField
-                    label="Internal admin note"
-                    textarea
-                    className="mt-4 min-h-[100px]"
-                    placeholder="Notes visible to operators…"
-                    value={adminNote}
-                    onChange={(e) => setAdminNote(e.target.value)}
-                  />
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setRequests((prev) =>
-                        prev.map((r) => (r.id === selectedRequest.id ? { ...r, admin_note: adminNote } : r)),
-                      )
-                    }
-                    className="mt-3 rounded-full border px-4 py-2 text-sm font-medium"
-                    style={{ borderColor: COLORS.line, color: COLORS.navy }}
-                  >
-                    Save note
-                  </button>
-                </div>
-                <div className="flex flex-col justify-center gap-3 rounded-2xl border p-5" style={{ borderColor: COLORS.line, backgroundColor: COLORS.soft }}>
-                  <p className="text-sm font-medium" style={{ color: COLORS.text }}>Actions</p>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const isMeld = selectedRequest.pipeline.includes("meld");
-                      setSlurmForm((f) => ({
-                        ...f,
-                        job_name: `eval-${selectedRequest.id.toLowerCase().replace(/\s/g, "")}`,
-                        dataset: selectedRequest.atlasId === "ideas" ? "ideas" : "dataset",
-                        pipeline_image: selectedRequest.pipeline,
-                        pipeline_name: isMeld ? "meld-graph-fcd" : "",
-                        runtime_profile: isMeld ? "meld_graph" : "generic",
-                        meld_subject_id: isMeld ? "sub-01" : "",
-                      }));
-                      setShowHpcModal(false);
-                      setShowReportModal(false);
-                      setJobPreview({ loading: false, error: null, data: null });
-                      setSlurmPreviewTab("sbatch");
-                      setShowSlurmModal(true);
-                      if (isVeritasApiConfigured()) {
-                        refreshHpcSummary();
+              {!selectedRequest ? (
+                <p className="text-sm" style={{ color: COLORS.muted }}>
+                  Select a request above, or wait for submissions from the User Dashboard when the API is connected.
+                </p>
+              ) : (
+                <div className="grid gap-8 lg:grid-cols-2">
+                  <div>
+                    <h3 className="text-lg font-semibold" style={{ color: COLORS.text }}>
+                      Selected request · {selectedRequest.id}
+                    </h3>
+                    <p className="mt-2 text-sm" style={{ color: COLORS.muted }}>
+                      Pipeline <code className="rounded bg-slate-100 px-1 text-xs">{selectedRequest.pipeline}</code>
+                    </p>
+                    <TextField
+                      label="Internal admin note"
+                      textarea
+                      className="mt-4 min-h-[100px]"
+                      placeholder="Notes visible to operators…"
+                      value={adminNote}
+                      onChange={(e) => setAdminNote(e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setRequests((prev) =>
+                          prev.map((r) => (r.id === selectedRequest.id ? { ...r, admin_note: adminNote } : r)),
+                        )
                       }
-                    }}
-                    className="rounded-full px-5 py-3 text-sm font-medium text-white"
-                    style={{ backgroundColor: COLORS.navy }}
-                  >
-                    Submit job (Slurm resources)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setReportForm({
-                        subject: `Veritas validation report — ${selectedRequest.id}`,
-                        body: `Dear ${selectedRequest.user},\n\nYour evaluation request ${selectedRequest.id} is ready. Metrics and PDF are attached in the platform.\n\n— Veritas operations`,
-                      });
-                      setShowHpcModal(false);
-                      setShowSlurmModal(false);
-                      setShowReportModal(true);
-                    }}
-                    className="rounded-full border px-5 py-3 text-sm font-medium"
-                    style={{ borderColor: COLORS.line, color: COLORS.navy }}
-                  >
-                    Send report to requester
-                  </button>
-                  <p className="text-xs leading-relaxed" style={{ color: COLORS.muted }}>
-                    <code className="rounded bg-white px-1">POST …/jobs/preview/{"{request_id}"}</code> (dry run) and{" "}
-                    <code className="rounded bg-white px-1">POST …/jobs/submit/{"{request_id}"}</code> (Slurm when HPC_MODE=slurm). Notify the requester when the report is ready.
-                  </p>
+                      className="mt-3 rounded-full border px-4 py-2 text-sm font-medium"
+                      style={{ borderColor: COLORS.line, color: COLORS.navy }}
+                    >
+                      Save note
+                    </button>
+                  </div>
+                  <div className="flex flex-col justify-center gap-3 rounded-2xl border p-5" style={{ borderColor: COLORS.line, backgroundColor: COLORS.soft }}>
+                    <p className="text-sm font-medium" style={{ color: COLORS.text }}>Actions</p>
+                    <button
+                      type="button"
+                      disabled={!selectedRequest}
+                      onClick={() => {
+                        const isMeld = selectedRequest.pipeline.includes("meld");
+                        setSlurmForm((f) => ({
+                          ...f,
+                          job_name: `eval-${selectedRequest.id.toLowerCase().replace(/\s/g, "")}`,
+                          dataset: selectedRequest.atlasId === "ideas" ? "ideas" : "dataset",
+                          pipeline_image: selectedRequest.pipeline,
+                          pipeline_name: isMeld ? "meld-graph-fcd" : "",
+                          runtime_profile: isMeld ? "meld_graph" : "generic",
+                          meld_subject_mode: "single",
+                          meld_subject_id: isMeld ? "sub-1" : "",
+                          meld_subject_batch: "sub-1\nsub-2\nsub-3",
+                        }));
+                        setShowHpcModal(false);
+                        setShowReportModal(false);
+                        setJobPreview({ loading: false, error: null, data: null });
+                        setSlurmPreviewTab("sbatch");
+                        setShowSlurmModal(true);
+                        if (isVeritasApiConfigured()) {
+                          refreshHpcSummary();
+                        }
+                      }}
+                      className="rounded-full px-5 py-3 text-sm font-medium text-white disabled:opacity-40"
+                      style={{ backgroundColor: COLORS.navy }}
+                    >
+                      Submit job (Slurm resources)
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!selectedRequest}
+                      onClick={() => {
+                        setReportForm({
+                          subject: `Veritas validation report — ${selectedRequest.id}`,
+                          body: `Dear ${selectedRequest.user},\n\nYour evaluation request ${selectedRequest.id} is ready. Metrics and PDF are attached in the platform.\n\n— Veritas operations`,
+                        });
+                        setShowHpcModal(false);
+                        setShowSlurmModal(false);
+                        setShowReportModal(true);
+                      }}
+                      className="rounded-full border px-5 py-3 text-sm font-medium disabled:opacity-40"
+                      style={{ borderColor: COLORS.line, color: COLORS.navy }}
+                    >
+                      Send report to requester
+                    </button>
+                    <p className="text-xs leading-relaxed" style={{ color: COLORS.muted }}>
+                      <code className="rounded bg-white px-1">POST …/jobs/preview/{"{request_id}"}</code> (dry run) and{" "}
+                      <code className="rounded bg-white px-1">POST …/jobs/submit/{"{request_id}"}</code> (Slurm sbatch on the cluster). Notify the requester when the report is ready.
+                    </p>
+                  </div>
                 </div>
-              </div>
+              )}
             </Card>
           </div>
         </PageShell>
@@ -1317,7 +1498,7 @@ reports:
       {showHpcModal ? (
         <ModalShell
           title="HPC connection (SSH)"
-          subtitle="Calls the Veritas API: Test runs SSH only; Save validates SSH and stores this as the active cluster connection for Slurm submit when HPC_MODE=slurm. Leave key path empty to use ssh-agent / default keys on the API host."
+          subtitle="Calls the Veritas API: Test runs SSH only; Save validates SSH and stores this as the active cluster connection for Slurm submit. Leave key path empty to use ssh-agent / default keys on the API host."
           onClose={() => {
             setShowHpcModal(false);
             setHpcModalMessage(null);
@@ -1409,7 +1590,7 @@ reports:
         </ModalShell>
       ) : null}
 
-      {showSlurmModal ? (
+      {showSlurmModal && selectedRequest ? (
         <ModalShell
           title="Submit Slurm job"
           subtitle={`Request ${selectedRequest.id} · ${selectedRequest.user} · preview POST /api/v1/jobs/preview/${selectedRequest.id} · submit POST /api/v1/jobs/submit/${selectedRequest.id}`}
@@ -1447,10 +1628,11 @@ reports:
                     setJobPreview({ loading: false, error: "Job name, pipeline image, and dataset are required.", data: null });
                     return;
                   }
-                  if (slurmForm.runtime_profile === "meld_graph" && !slurmForm.meld_subject_id.trim()) {
+                  if (!meldSubjectsValid(slurmForm)) {
                     setJobPreview({
                       loading: false,
-                      error: "MELD subject id is required when runtime profile is meld_graph.",
+                      error:
+                        "MELD: enter one subject id (single) or a batch list — one subject per line or comma-separated.",
                       data: null,
                     });
                     return;
@@ -1485,10 +1667,11 @@ reports:
                     setJobPreview({ loading: false, error: "Job name, pipeline image, and dataset are required.", data: null });
                     return;
                   }
-                  if (slurmForm.runtime_profile === "meld_graph" && !slurmForm.meld_subject_id.trim()) {
+                  if (!meldSubjectsValid(slurmForm)) {
                     setJobPreview({
                       loading: false,
-                      error: "MELD subject id is required when runtime profile is meld_graph.",
+                      error:
+                        "MELD: enter one subject id (single) or a batch list — one subject per line or comma-separated.",
                       data: null,
                     });
                     return;
@@ -1496,7 +1679,7 @@ reports:
                   if (slurmSubmitBlocked) {
                     setJobPreview({
                       loading: false,
-                      error: "Connect to HPC first (API is in HPC_MODE=slurm).",
+                      error: "Connect to HPC first (Slurm mode requires SSH).",
                       data: null,
                     });
                     return;
@@ -1526,7 +1709,7 @@ reports:
         >
           {slurmSubmitBlocked ? (
             <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
-              The API is in <strong>HPC_MODE=slurm</strong>: connect to your cluster (SSH) from the HPC card before submitting. In <strong>mock</strong> mode, submit works without SSH.
+              Connect to your cluster (SSH) from the HPC card before submitting — Slurm mode runs real <code className="rounded bg-white px-1 text-xs">sbatch</code> on the login node.
             </div>
           ) : null}
           <div className="grid gap-4 sm:grid-cols-2">
@@ -1555,7 +1738,40 @@ reports:
               onChange={(e) => setSlurmForm({ ...slurmForm, runtime_profile: e.target.value })}
             />
             {slurmForm.runtime_profile === "meld_graph" ? (
-              <TextField label="MELD subject id" placeholder="sub-01" value={slurmForm.meld_subject_id} onChange={(e) => setSlurmForm({ ...slurmForm, meld_subject_id: e.target.value })} />
+              <>
+                <div className="sm:col-span-2">
+                  <SelectField
+                    label="MELD subjects"
+                    options={[
+                      { name: "single", label: "Single subject" },
+                      { name: "batch", label: "Batch subjects" },
+                    ]}
+                    value={slurmForm.meld_subject_mode}
+                    onChange={(e) => setSlurmForm({ ...slurmForm, meld_subject_mode: e.target.value })}
+                  />
+                </div>
+                {slurmForm.meld_subject_mode === "single" ? (
+                  <TextField
+                    label="BIDS subject id"
+                    placeholder="sub-1"
+                    value={slurmForm.meld_subject_id}
+                    onChange={(e) => setSlurmForm({ ...slurmForm, meld_subject_id: e.target.value })}
+                    className="sm:col-span-2"
+                  />
+                ) : (
+                  <TextField
+                    label="Batch subject ids"
+                    placeholder={"sub-1\nsub-2\nsub-3"}
+                    textarea
+                    className="min-h-[120px] font-mono text-xs sm:col-span-2"
+                    value={slurmForm.meld_subject_batch}
+                    onChange={(e) => setSlurmForm({ ...slurmForm, meld_subject_batch: e.target.value })}
+                  />
+                )}
+                <p className="text-xs sm:col-span-2" style={{ color: COLORS.muted }}>
+                  Batch runs all subjects in one Slurm job (sequential loop). Use <code className="rounded bg-slate-100 px-1">meld_subject_ids</code> in the API.
+                </p>
+              </>
             ) : null}
             <div className="sm:col-span-2">
               <TextField
@@ -1642,7 +1858,7 @@ reports:
         </ModalShell>
       ) : null}
 
-      {showReportModal ? (
+      {showReportModal && selectedRequest ? (
         <ModalShell
           title="Send report to requester"
           subtitle={`To: ${selectedRequest.requesterEmail} · ${selectedRequest.user}`}

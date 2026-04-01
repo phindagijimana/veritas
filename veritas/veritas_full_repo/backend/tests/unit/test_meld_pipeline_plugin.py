@@ -26,7 +26,7 @@ def test_parse_meld_plugin_full_yaml():
     yml = """
 name: meld-graph-fcd
 title: M
-image: docker.io/meldproject/meld_graph:latest
+image: docker.io/phindagijimana321/meld_graph:v2.2.4-nir2
 modality: MRI
 entrypoint: python x.py
 inputs:
@@ -42,7 +42,7 @@ plugin:
   type: meld_graph
   containers:
     freesurfer: docker.io/freesurfer/fs:7.4.1
-    meld: docker.io/meldproject/meld_graph:latest
+    meld: docker.io/phindagijimana321/meld_graph:v2.2.4-nir2
   secrets:
     freesurfer_license_file: license.txt
     meld_license_file: meld_license.txt
@@ -54,14 +54,15 @@ plugin:
     assert cfg.fs_license_container == "/run/secrets/license.txt"
     assert cfg.meld_license_container == "/run/secrets/meld_license.txt"
     assert cfg.freesurfer_image == "docker.io/freesurfer/fs:7.4.1"
-    assert cfg.meld_image == "docker.io/meldproject/meld_graph:latest"
+    assert cfg.meld_image == "docker.io/phindagijimana321/meld_graph:v2.2.4-nir2"
 
 
-def test_validate_meld_yaml_plugin_checks():
+@patch("app.services.pipeline_yaml_validator.get_settings", return_value=_settings_skip_image())
+def test_validate_meld_yaml_plugin_checks(_mock):
     yml = """
 name: meld-graph-fcd
 title: M
-image: docker.io/meldproject/meld_graph:latest
+image: docker.io/phindagijimana321/meld_graph:v2.2.4-nir2
 modality: MRI
 entrypoint: python x.py
 inputs:
@@ -77,7 +78,7 @@ plugin:
   type: meld_graph
   containers:
     freesurfer: docker.io/freesurfer/fs:7.4.1
-    meld: docker.io/meldproject/meld_graph:latest
+    meld: docker.io/phindagijimana321/meld_graph:v2.2.4-nir2
   secrets:
     freesurfer_license_file: license.txt
     meld_license_file: meld_license.txt
@@ -94,7 +95,7 @@ def test_validate_rejects_bad_license_basename(_mock):
     yml = """
 name: m
 title: M
-image: docker.io/meldproject/meld_graph:latest
+image: docker.io/phindagijimana321/meld_graph:v2.2.4-nir2
 modality: MRI
 entrypoint: python x.py
 inputs:

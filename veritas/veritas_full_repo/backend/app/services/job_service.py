@@ -11,6 +11,13 @@ from app.models.pipeline import Pipeline
 from app.models.report import Report
 from app.models.request import EvaluationRequest
 from app.schemas.hpc import SlurmJobSubmitRequest
+
+
+def _meld_subjects_present(payload: SlurmJobSubmitRequest) -> bool:
+    ids = [str(x).strip() for x in (payload.meld_subject_ids or []) if x is not None and str(x).strip()]
+    if ids:
+        return True
+    return bool((payload.meld_subject_id or "").strip())
 from app.core.config import get_settings
 from app.schemas.job import JobAdvanceResult, JobPreviewRead, JobRead
 from app.services.hpc_service import HPCConnectionService
@@ -94,8 +101,10 @@ class JobService:
             db.flush()
 
         rp = (payload.runtime_profile or "generic").strip().lower()
-        if rp == "meld_graph" and not (payload.meld_subject_id or "").strip():
-            raise ValueError("meld_subject_id is required when runtime_profile=meld_graph")
+        if rp == "meld_graph" and not _meld_subjects_present(payload):
+            raise ValueError(
+                "meld_subject_id or meld_subject_ids is required when runtime_profile=meld_graph"
+            )
 
         pipeline_yaml: str | None = None
         name_ref = (payload.pipeline_name or "").strip()
@@ -111,6 +120,9 @@ class JobService:
         scheduler = HPCSchedulerService()
         connection = HPCConnectionService.get_active_connection(db)
         result = scheduler.submit(connection, request.request_code, payload, pipeline_yaml=pipeline_yaml)
+        if not result.scheduler_job_id:
+            msg = (result.submit_error or "").strip() or "Slurm sbatch did not return a job id."
+            raise ValueError(msg)
 
         resources = f"{payload.resources.gpu} GPU • {payload.resources.cpu} CPU • {payload.resources.memory_gb} GB RAM"
         job = Job(
@@ -148,8 +160,10 @@ class JobService:
             raise ValueError("Cannot preview for a completed request")
 
         rp = (payload.runtime_profile or "generic").strip().lower()
-        if rp == "meld_graph" and not (payload.meld_subject_id or "").strip():
-            raise ValueError("meld_subject_id is required when runtime_profile=meld_graph")
+        if rp == "meld_graph" and not _meld_subjects_present(payload):
+            raise ValueError(
+                "meld_subject_id or meld_subject_ids is required when runtime_profile=meld_graph"
+            )
 
         pipeline_yaml: str | None = None
         name_ref = (payload.pipeline_name or "").strip()

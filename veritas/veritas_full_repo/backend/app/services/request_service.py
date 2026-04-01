@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
@@ -84,7 +86,19 @@ class RequestService:
         dataset_name = payload.datasets[0] if payload.datasets else "Default Dataset"
         dataset = db.scalar(select(Dataset).where(Dataset.name == dataset_name).limit(1))
         if not dataset:
-            dataset = Dataset(name=dataset_name, modality="MRI")
+            base = re.sub(r"[^A-Za-z0-9]+", "-", dataset_name.strip()).strip("-").upper()[:24] or "DATASET"
+            code = base[:32]
+            n = 0
+            while db.scalar(select(Dataset).where(Dataset.code == code).limit(1)):
+                n += 1
+                suffix = f"-{n}"
+                code = f"{base[: 32 - len(suffix)]}{suffix}"[:32]
+            dataset = Dataset(
+                code=code,
+                name=dataset_name,
+                disease_group="General",
+                modality="MRI",
+            )
             db.add(dataset)
             db.flush()
 

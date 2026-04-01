@@ -60,7 +60,8 @@ class Settings(BaseSettings):
     trusted_hosts: str = ""
 
     # --- HPC / Slurm ---
-    hpc_mode: Literal["mock", "slurm"] = "mock"
+    # Default slurm: real SSH/sbatch. Set HPC_MODE=mock for offline tests (see tests/conftest.py).
+    hpc_mode: Literal["mock", "slurm"] = "slurm"
     # If true, API startup verifies an active HPC row and SSH reachability (Slurm mode only).
     hpc_validate_on_startup: bool = False
     # Shell lines inserted into generated sbatch after headers (e.g. `module load apptainer`).

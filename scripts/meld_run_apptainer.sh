@@ -23,7 +23,7 @@ cd "$ROOT"
 
 export VALIDATOR_ROOT="${VALIDATOR_ROOT:-$ROOT}"
 IDEAS_BIDS_ROOT="${IDEAS_BIDS_ROOT:-/ood/share/datasets/ideas}"
-MELD_IMAGE_REF="${MELD_IMAGE_REF:-docker://meldproject/meld_graph:latest}"
+MELD_IMAGE_REF="${MELD_IMAGE_REF:-docker://phindagijimana321/meld_graph:v2.2.4-nir2}"
 MELD_SIF="${MELD_SIF:-$ROOT/meld_docker_data/meld_graph.sif}"
 TMPDIR="${APPTAINER_TMPDIR:-$ROOT/meld_docker_data/.apptainer_tmp}"
 export APPTAINER_TMPDIR="$TMPDIR"

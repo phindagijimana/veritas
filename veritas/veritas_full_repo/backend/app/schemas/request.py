@@ -32,6 +32,7 @@ class EvaluationRequestRead(BaseModel):
     submitted_at: datetime
     current_phase: str
     report_status: str
+    submitted_by: str | None = None
     admin_note: str | None = None
     timeline: list[TimelineItem] = Field(default_factory=list)
     pipeline: str | None = None

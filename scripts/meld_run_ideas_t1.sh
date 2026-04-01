@@ -52,7 +52,7 @@ export DOCKER_USER="${DOCKER_USER:-$(id -u):$(id -g)}"
 
 # Optional pull
 if [[ "${MELD_PULL:-0}" == "1" ]]; then
-  docker pull meldproject/meld_graph:latest
+  docker pull phindagijimana321/meld_graph:v2.2.4-nir2
 fi
 
 # Subject id: env or first sub-* under input/

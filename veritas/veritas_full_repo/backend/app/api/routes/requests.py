@@ -32,10 +32,9 @@ def get_request(request_id: str, db: Session = Depends(get_db)):
 @router.post("", response_model=EvaluationRequestItemResponse)
 def create_request(payload: EvaluationRequestCreate, db: Session = Depends(get_db), user=Depends(get_current_user)):
     created = RequestService.create(db, payload)
-    data = created if isinstance(created, dict) else created
-    if isinstance(data, dict):
-        data.setdefault("submitted_by", getattr(user, "email", "unknown"))
-    return {"data": data}
+    return {
+        "data": created.model_copy(update={"submitted_by": getattr(user, "email", None)}),
+    }
 
 
 @router.patch("/{request_id}/status", response_model=EvaluationRequestItemResponse)

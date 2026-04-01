@@ -10,7 +10,7 @@ from app.core.config import get_settings
 def _meld_payload():
     return {
         "job_name": "meld-ideas-preview",
-        "pipeline": "meldproject/meld_graph:latest",
+        "pipeline": "docker.io/phindagijimana321/meld_graph:v2.2.4-nir2",
         "dataset": "ideas",
         "partition": "gpu",
         "runtime_profile": "meld_graph",
@@ -34,7 +34,7 @@ def test_preview_meld_returns_sbatch_and_pipeline_script(client, monkeypatch):
     data = r.json()["data"]
     assert data["runtime_engine"] == "apptainer"
     assert data["hpc_mode"] == "mock"
-    assert "apptainer run --cleanenv" in data["pipeline_runtime_script"]
+    assert "apptainer exec --cleanenv" in data["pipeline_runtime_script"]
     assert "docker://" in data["pipeline_runtime_script"]
     assert "# Veritas runtime_engine=apptainer" in data["sbatch_script"]
     assert "printf '%s'" in data["sbatch_script"]  # base64 embed
@@ -46,6 +46,20 @@ def test_preview_meld_requires_subject(client):
     r = client.post("/api/v1/jobs/preview/REQ-2090", json=payload)
     assert r.status_code == 400
     assert "meld_subject_id" in r.json()["detail"]
+
+
+def test_preview_meld_batch_subject_ids_without_single(client, monkeypatch):
+    monkeypatch.setenv("RUNTIME_ENGINE", "apptainer")
+    get_settings.cache_clear()
+    payload = _meld_payload()
+    del payload["meld_subject_id"]
+    payload["meld_subject_ids"] = ["sub-01", "sub-02"]
+    r = client.post("/api/v1/jobs/preview/REQ-2090", json=payload)
+    assert r.status_code == 200, r.text
+    pr = r.json()["data"]["pipeline_runtime_script"]
+    assert "sub-01" in pr
+    assert "sub-02" in pr
+    assert "SUBJECTS=(" in pr
 
 
 def test_preview_unknown_request(client):

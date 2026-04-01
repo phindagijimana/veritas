@@ -9,7 +9,7 @@
 
 services:
   meld_graph:
-    image: docker.io/meldproject/meld_graph:latest
+    image: docker.io/phindagijimana321/meld_graph:v2.2.4-nir2
     platform: "linux/amd64"
     volumes:
       - ${VALIDATOR_ROOT}/meld_docker_data:/data

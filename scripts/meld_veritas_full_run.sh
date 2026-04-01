@@ -20,7 +20,7 @@
 #   MELD_GRAPH_DIR=    Optional: extracted meld_graph with compose.yml (else use validator compose)
 #   MELD_VERIFY=1      Run pytest in MELD container when licenses are present
 #   MELD_VERIFY_STRICT=1  Exit with error if licenses missing but MELD_VERIFY=1
-#   MELD_PULL=1        docker pull meldproject/meld_graph:latest before verify
+#   MELD_PULL=1        docker pull phindagijimana321/meld_graph:v2.2.4-nir2 before verify
 #
 # References:
 #   - https://github.com/MELDProject/meld_graph
@@ -111,8 +111,8 @@ if [[ "$MELD_VERIFY" == "1" ]]; then
     mkdir -p "$ROOT/meld_docker_data"
     if [[ "$MELD_PULL" == "1" ]]; then
       echo ""
-      echo "Pulling meldproject/meld_graph:latest ..."
-      docker pull meldproject/meld_graph:latest
+      echo "Pulling phindagijimana321/meld_graph:v2.2.4-nir2 ..."
+      docker pull phindagijimana321/meld_graph:v2.2.4-nir2
     fi
     export DOCKER_USER="${DOCKER_USER:-$(id -u):$(id -g)}"
     if [[ -n "${MELD_GRAPH_DIR:-}" ]]; then

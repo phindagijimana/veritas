@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 from pathlib import PurePosixPath
 import re
+import shlex
 
 from app.schemas.hpc import SlurmResourcesConfig
 
@@ -50,6 +51,7 @@ class SlurmService:
         *,
         runtime_engine: str = "docker",
         prologue_sh: str = "",
+        meld_license_host_dir: str = "",
     ) -> str:
         lines = [
             SlurmService.build_script(config),
@@ -62,6 +64,15 @@ class SlurmService:
             line = raw.strip()
             if line:
                 lines.append(line)
+        lic = (meld_license_host_dir or "").strip()
+        if lic:
+            lines.append(f"export MELD_LICENSE_HOST_DIR={shlex.quote(lic)}")
+            lines.append("")
+        # Podman (often behind `docker` on HPC) requires a writable XDG runtime dir when /run/user/<uid> is missing on batch nodes.
+        if (runtime_engine or "").strip().lower() == "docker":
+            lines.append('export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/xdg-runtime-$USER}"')
+            lines.append('mkdir -p "$XDG_RUNTIME_DIR"')
+            lines.append("")
         lines.extend(
             [
                 f"mkdir -p {remote_workdir}",
@@ -72,9 +83,9 @@ class SlurmService:
                 "# Container runtime execution (base64 avoids quoting issues for multiline MELD scripts)",
                 f"printf '%s' '{base64.b64encode(runtime_command.encode()).decode()}' | base64 -d > runtime_command.sh",
                 "chmod +x runtime_command.sh",
-                "./runtime_command.sh || true",
+                "./runtime_command.sh",
                 "",
-                "# Fallback/mock artifact block for environments without the runtime image installed",
+                "# Placeholders only run if runtime exited 0; MELD/docker errors fail the Slurm job (set -e).",
                 "if [ ! -f metrics.json ]; then",
                 "  cat <<'EOF' > metrics.json",
                 '  {"status": "completed", "dice": 0.82, "auc": 0.88}',

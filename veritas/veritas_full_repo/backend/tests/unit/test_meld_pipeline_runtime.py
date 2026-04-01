@@ -22,69 +22,88 @@ def _mock_settings(**kwargs):
 def test_build_command_singularity_uses_docker_uri():
     with patch("app.services.container_runtime.get_settings", return_value=_mock_settings(runtime_engine="singularity")):
         rt = ContainerRuntimeService()
-        cmd = rt.build_command("meldproject/meld_graph:latest", "/data/in", "/data/out")
+        cmd = rt.build_command("phindagijimana321/meld_graph:v2.2.4-nir2", "/data/in", "/data/out")
     assert "singularity run" in cmd
-    assert "docker://meldproject/meld_graph:latest" in cmd
+    assert "docker://phindagijimana321/meld_graph:v2.2.4-nir2" in cmd
 
 
 def test_meld_runtime_script_emits_singularity_cli():
     with patch("app.services.container_runtime.get_settings", return_value=_mock_settings(runtime_engine="singularity")):
         rt = ContainerRuntimeService()
         script = rt.build_meld_graph_runtime_script(
-            image="meldproject/meld_graph:latest",
+            image="phindagijimana321/meld_graph:v2.2.4-nir2",
             meld_data_dir="/tmp/job/meld_docker_data",
-            meld_subject_id="sub-01",
+            meld_subject_ids=["sub-01"],
             meld_session=None,
             staged_dataset_path="/data/staging/ideas",
             default_ideas_staging="/ood/share/datasets/ideas",
         )
-    assert "singularity run --cleanenv" in script
-    assert "docker://meldproject/meld_graph:latest" in script
+    assert "singularity exec --cleanenv" in script
+    assert "docker://phindagijimana321/meld_graph:v2.2.4-nir2" in script
 
 
 def test_meld_runtime_script_emits_apptainer_cli():
     with patch("app.services.container_runtime.get_settings", return_value=_mock_settings(runtime_engine="apptainer")):
         rt = ContainerRuntimeService()
         script = rt.build_meld_graph_runtime_script(
-            image="meldproject/meld_graph:latest",
+            image="phindagijimana321/meld_graph:v2.2.4-nir2",
             meld_data_dir="/tmp/m",
-            meld_subject_id="sub-01",
+            meld_subject_ids=["sub-01"],
             meld_session=None,
             staged_dataset_path="/s",
             default_ideas_staging="/ood/share/datasets/ideas",
         )
-    assert "apptainer run --cleanenv" in script
+    assert "apptainer exec --cleanenv" in script
 
 
 def test_meld_runtime_script_contains_staging_and_subject():
     with patch("app.services.container_runtime.get_settings", return_value=_mock_settings()):
         rt = ContainerRuntimeService()
         script = rt.build_meld_graph_runtime_script(
-            image="meldproject/meld_graph:latest",
+            image="phindagijimana321/meld_graph:v2.2.4-nir2",
             meld_data_dir="/tmp/job/meld_docker_data",
-            meld_subject_id="sub-01",
+            meld_subject_ids=["sub-01"],
             meld_session=None,
             staged_dataset_path="/data/staging/ideas",
             default_ideas_staging="/ood/share/datasets/ideas",
         )
     assert "STAGING_ROOT=" in script
     assert "sub-01" in script
+    # Resolves sub-01 vs sub-1 (IDEAS extract) before failing on missing BIDS dir
+    assert "_canon=" in script or "10#$_nid" in script
     assert "new_pt_pipeline.py" in script
     assert "meld_bids_config.json" in script
     assert "FS_LICENSE_CONTAINER=" in script
     assert "MELD_LICENSE_CONTAINER=" in script
-    assert "meldproject/meld_graph:latest" in script
+    assert "phindagijimana321/meld_graph:v2.2.4-nir2" in script
+
+
+def test_meld_runtime_script_batch_loops_subjects():
+    with patch("app.services.container_runtime.get_settings", return_value=_mock_settings()):
+        rt = ContainerRuntimeService()
+        script = rt.build_meld_graph_runtime_script(
+            image="phindagijimana321/meld_graph:v2.2.4-nir2",
+            meld_data_dir="/tmp/job/meld_docker_data",
+            meld_subject_ids=["sub-01", "sub-02"],
+            meld_session=None,
+            staged_dataset_path="/data/staging/ideas",
+            default_ideas_staging="/ood/share/datasets/ideas",
+        )
+    assert "SUBJECTS=(" in script
+    assert "sub-01" in script
+    assert "sub-02" in script
+    assert 'for SUB in "${SUBJECTS[@]}"' in script
 
 
 def test_meld_runtime_script_uses_yaml_plugin_mounts():
     yml = """
 runtime_profile: meld_graph
-image: docker.io/meldproject/meld_graph:latest
+image: docker.io/phindagijimana321/meld_graph:v2.2.4-nir2
 plugin:
   type: meld_graph
   containers:
     freesurfer: docker.io/freesurfer/fs:7.4.1
-    meld: docker.io/meldproject/meld_graph:latest
+    meld: docker.io/phindagijimana321/meld_graph:v2.2.4-nir2
   secrets:
     freesurfer_license_file: license.txt
     meld_license_file: meld_license.txt
@@ -95,9 +114,9 @@ plugin:
     with patch("app.services.container_runtime.get_settings", return_value=_mock_settings()):
         rt = ContainerRuntimeService()
         script = rt.build_meld_graph_runtime_script(
-            image="meldproject/meld_graph:latest",
+            image="phindagijimana321/meld_graph:v2.2.4-nir2",
             meld_data_dir="/tmp/m",
-            meld_subject_id="01",
+            meld_subject_ids=["01"],
             meld_session=None,
             staged_dataset_path="/data/s",
             default_ideas_staging="/ood/share/datasets/ideas",
@@ -146,13 +165,14 @@ def test_pipeline_runner_meld_manifest(mock_storage_cls, tmp_path):
             runner = PipelineRunnerService()
             payload = SlurmJobSubmitRequest(
                 job_name="meld",
-                pipeline="meldproject/meld_graph:latest",
+                pipeline="phindagijimana321/meld_graph:v2.2.4-nir2",
                 dataset="ideas",
                 runtime_profile="meld_graph",
                 meld_subject_id="sub-01",
                 resources=SlurmResourcesPayload(),
             )
-            plan = runner.build_plan("REQ-1", "meld", "meldproject/meld_graph:latest", "ideas", job_payload=payload)
+            plan = runner.build_plan("REQ-1", "meld", "phindagijimana321/meld_graph:v2.2.4-nir2", "ideas", job_payload=payload)
     assert "meld_docker_data" in plan.runtime_command
     assert "sub-01" in plan.runtime_command
     assert plan.manifest.get("runtime_profile") == "meld_graph"
+    assert plan.manifest.get("meld_subject_ids") == ["sub-01"]

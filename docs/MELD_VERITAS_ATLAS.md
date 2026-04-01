@@ -2,11 +2,13 @@
 
 This document connects the **validator** stack (Atlas staging via Veritas) with the **MELD Graph** FCD pipeline shipped as Docker images by [MELDProject/meld_graph](https://github.com/MELDProject/meld_graph).
 
+**Recommended image tag:** `docker.io/phindagijimana321/meld_graph:v2.2.4-nir2` — use this published build for Veritas jobs and local scripts (aligned NumPy/h5py in the `meld_graph` conda env).
+
 ## Platform catalog (Veritas + Atlas like any user)
 
 On **every Veritas API startup**, the backend idempotently ensures:
 
-- **Pipeline** `meld-graph-fcd` (`docker.io/meldproject/meld_graph:latest`, `runtime_profile: meld_graph`, `atlas_dataset_id: ideas`) is present so **`GET /api/v1/pipelines`** lists it for everyone.
+- **Pipeline** `meld-graph-fcd` (`docker.io/phindagijimana321/meld_graph:v2.2.4-nir2`, `runtime_profile: meld_graph`, `atlas_dataset_id: ideas`) is present so **`GET /api/v1/pipelines`** lists it for everyone.
 - **Dataset** `code=IDEAS`, **`name=ideas`** matches Atlas `dataset_id` for **`GET /api/v1/datasets`** and job payloads.
 
 **Atlas** exposes public datasets (including `ideas`) through the same JWT/API-key flows as other users: list datasets, request staging, and complete staging phases—no special-case “admin only” for IDEAS in the validator stack.
@@ -30,7 +32,7 @@ When a user submits **MELD** as the pipeline image and **IDEAS** (Atlas `atlas_d
 
 | Field | Value |
 |-------|--------|
-| `pipeline` | `meldproject/meld_graph:latest` (or your mirrored tag) |
+| `pipeline` | `docker.io/phindagijimana321/meld_graph:v2.2.4-nir2` (or your mirrored tag) |
 | `dataset` | `ideas` (label only; staging path resolved below) |
 | `runtime_profile` | `meld_graph` |
 | `meld_subject_id` | BIDS subject, e.g. `sub-01` |
@@ -56,7 +58,7 @@ Example JSON body:
 ```json
 {
   "job_name": "meld-ideas-t1",
-  "pipeline": "meldproject/meld_graph:latest",
+  "pipeline": "docker.io/phindagijimana321/meld_graph:v2.2.4-nir2",
   "pipeline_name": "meld-graph-fcd",
   "dataset": "ideas",
   "partition": "gpu",
@@ -107,7 +109,7 @@ They are listed in `.gitignore` so they are not committed. `scripts/meld-compose
 
 - **Registration / license**: MELD Graph v2.2.4+ expects a license file; see the [project README](https://github.com/MELDProject/meld_graph).
 - **Model weights**: Automated download may fail; see [issue #102](https://github.com/MELDProject/meld_graph/issues/102) for manual Figshare workaround.
-- **GPU**: Optional; `meldproject/meld_graph` tags include GPU variants for large VRAM setups.
+- **GPU**: Optional; `phindagijimana321/meld_graph` tags include GPU-oriented builds where published.
 - **Harmonisation**: Recommended for new scanners (separate MELD step).
 
 ## Environment quick reference
@@ -156,7 +158,7 @@ Defaults to `scripts/fixtures/ideas_minimal_bids` (one subject, placeholder T1w)
 
 ### Podman / rootless image pulls
 
-Compose files use fully qualified names (e.g. `docker.io/meldproject/meld_graph:latest`). If you still see **`insufficient UIDs or GIDs`** when pulling, your login is missing **`/etc/subuid`** and **`/etc/subgid`** entries (common on LDAP names like `user@realm`).
+Compose files use fully qualified names (e.g. `docker.io/phindagijimana321/meld_graph:v2.2.4-nir2`). If you still see **`insufficient UIDs or GIDs`** when pulling, your login is missing **`/etc/subuid`** and **`/etc/subgid`** entries (common on LDAP names like `user@realm`).
 
 **Fix (one-time, sudo):** from the repo root run:
 
