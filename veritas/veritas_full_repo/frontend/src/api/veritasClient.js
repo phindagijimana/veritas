@@ -172,6 +172,17 @@ export async function previewSlurmJob(requestId, body, timeoutMs = 90000) {
   });
 }
 
+/* ───────────── leaderboard ───────────── */
+
+/**
+ * GET /api/v1/leaderboard — published entries (consented runs).
+ */
+export async function fetchLeaderboard(timeoutMs = 15000) {
+  const r = await apiFetch("/leaderboard", { timeoutMs });
+  if (!r.ok) return r;
+  return { ok: true, data: Array.isArray(r.data) ? r.data : [] };
+}
+
 /* ───────────── requests ───────────── */
 
 export async function fetchEvaluationRequests(timeoutMs = 15000) {

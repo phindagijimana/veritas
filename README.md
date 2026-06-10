@@ -42,6 +42,21 @@ cp veritas/veritas_full_repo/backend/env.local.sqlite.example veritas/veritas_fu
 ./platform start       # API: http://127.0.0.1:6000 — GET /api/v1/health
 ```
 
+**SQLite-only dev path** (no Postgres / Redis needed):
+
+```bash
+cd veritas/veritas_full_repo/backend
+DATABASE_URL=sqlite:////tmp/veritas_dev.db APP_ENV=development \
+  python3 -m alembic upgrade head           # schema + seeded dev users
+DATABASE_URL=sqlite:////tmp/veritas_dev.db SEED_DEMO_DATA_ON_STARTUP=true \
+  HPC_MODE=mock AUTH_ENABLED=true \
+  AUTH_SECRET_KEY="$(openssl rand -hex 32)" \
+  python3 -m uvicorn app.main:app --host 127.0.0.1 --port 6000
+```
+
+Dev users seeded by `0014_users` when `APP_ENV != production`:
+`dev@veritas.local` (admin), `admin@veritas.local` (admin), `researcher@veritas.local` (researcher) — passwords match the email's local-part (`dev-password`, `admin-password`, `researcher-password`).
+
 **`http://127.0.0.1:7000` is the Veritas web UI** (Vite). Start it with `cd veritas/veritas_full_repo/frontend && npm run dev`. The UI proxies `/api` to the API on **6000** (see `frontend/vite.config.js`).
 
 For PostgreSQL/Redis (production-like), use `veritas/veritas_full_repo/backend/docker-compose.yml`, copy `backend/.env.example` → `.env`, then `./platform migrate && ./platform start`.

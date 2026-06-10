@@ -42,10 +42,13 @@ def upgrade() -> None:
         """
     )
 
-    op.alter_column("datasets", "code", nullable=False)
-    op.alter_column("datasets", "disease_group", nullable=False)
-    op.alter_column("datasets", "collection_name", nullable=False)
-    op.alter_column("datasets", "version", nullable=False)
+    # batch_alter_table → SQLite uses the table-rebuild path so NOT NULL
+    # constraint changes work; Postgres uses native ALTER COLUMN.
+    with op.batch_alter_table("datasets") as batch_op:
+        batch_op.alter_column("code", existing_type=sa.String(length=32), nullable=False)
+        batch_op.alter_column("disease_group", existing_type=sa.String(length=64), nullable=False)
+        batch_op.alter_column("collection_name", existing_type=sa.String(length=120), nullable=False)
+        batch_op.alter_column("version", existing_type=sa.String(length=24), nullable=False)
 
 
 def downgrade() -> None:

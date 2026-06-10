@@ -5,6 +5,7 @@ import {
   createEvaluationRequest,
   fetchEvaluationRequests,
   fetchHpcSummary,
+  fetchLeaderboard,
   fetchPipelines,
   previewSlurmJob,
   submitSlurmJob,
@@ -257,20 +258,6 @@ function apiRequestToRow(item) {
   };
 }
 
-const LEADERBOARD = {
-  HS: [
-    { rank: 1, pipeline: "HSNet", dataset: "HS Dataset", score: 0.85, metric: "Overall Score", published: "2026-03-12" },
-    { rank: 2, pipeline: "HippoGraph", dataset: "HS Dataset", score: 0.82, metric: "Overall Score", published: "2026-03-10" },
-  ],
-  FCD: [
-    { rank: 1, pipeline: "FCDGraph", dataset: "FCD Dataset", score: 0.82, metric: "Overall Score", published: "2026-03-11" },
-    { rank: 2, pipeline: "LesionNet", dataset: "FCD Dataset", score: 0.79, metric: "Overall Score", published: "2026-03-08" },
-  ],
-  AD: [
-    { rank: 1, pipeline: "AD-Biomarker", dataset: "Alzheimer Dataset", score: 0.88, metric: "Overall Score", published: "2026-03-09" },
-  ],
-};
-
 const JOBS = [
   { id: "JOB-801", requestId: "REQ-1042", status: "Running", type: "Hidden Test Eval", updatedAt: "11:48", schedulerId: "57291", lastSync: "11:49", workdir: "/scratch/veritas/REQ-1042", stdout: "stdout.log", stderr: "stderr.log" },
   { id: "JOB-802", requestId: "REQ-1043", status: "Completed", type: "Report Generation", updatedAt: "11:25", schedulerId: "57284", lastSync: "11:30", workdir: "/scratch/veritas/REQ-1043", stdout: "stdout.log", stderr: "stderr.log" },
@@ -454,6 +441,7 @@ export default function VeritasApp({ currentUser = null, onLogout = null } = {})
   const [userPhase, setUserPhase] = useState("Pipeline Prep");
   const [userRequestSubmit, setUserRequestSubmit] = useState({ loading: false, error: null, success: null });
   const [requestsFetchError, setRequestsFetchError] = useState(null);
+  const [leaderboard, setLeaderboard] = useState({ loading: false, error: null, entries: null });
   const [pipelineDraft, setPipelineDraft] = useState({
     name: "my-biomarker",
     title: "My biomarker pipeline",
@@ -677,6 +665,21 @@ reports:
     };
   }, [page]);
 
+  useEffect(() => {
+    if (page !== "leaderboard" || !isVeritasApiConfigured()) return;
+    let cancelled = false;
+    (async () => {
+      setLeaderboard({ loading: true, error: null, entries: null });
+      const res = await fetchLeaderboard();
+      if (cancelled) return;
+      if (res.ok) setLeaderboard({ loading: false, error: null, entries: res.data });
+      else setLeaderboard({ loading: false, error: res.message, entries: null });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [page]);
+
   const navButton = (item, mobile = false) => {
     const active = page === item.id;
     return (
@@ -733,6 +736,8 @@ reports:
                 <button
                   type="button"
                   onClick={onLogout}
+                  aria-label="Log out"
+                  data-testid="logout-button"
                   className="rounded-full border px-3 py-1 text-xs font-medium text-white transition hover:bg-white/10"
                   style={{ borderColor: "rgba(255,255,255,0.25)", background: "rgba(255,255,255,0.05)" }}
                 >
@@ -747,6 +752,8 @@ reports:
               <button
                 type="button"
                 onClick={onLogout}
+                aria-label="Log out"
+                data-testid="logout-button-mobile"
                 className="rounded-full border px-3 py-1 text-xs font-medium"
                 style={{ borderColor: "rgba(255,255,255,0.25)", background: "rgba(255,255,255,0.05)", color: "#ffffff" }}
               >
@@ -1245,36 +1252,57 @@ reports:
       {page === "leaderboard" && (
         <PageShell>
           <SectionTitle title="Leaderboard" subtitle="Consented pipelines published with their benchmark scores." />
-          <div className="space-y-5">
-            {Object.entries(LEADERBOARD).map(([group, rows]) => (
-              <Card key={group} className="overflow-hidden">
-                <div className="flex flex-col gap-2 border-b px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6" style={{ borderColor: COLORS.line }}>
-                  <div>
-                    <h3 className="text-lg font-semibold sm:text-xl" style={{ color: COLORS.text }}>{group} Leaderboard</h3>
+          {leaderboard.loading && (
+            <Card className="p-6 text-sm" style={{ color: COLORS.muted }}>Loading leaderboard…</Card>
+          )}
+          {!leaderboard.loading && leaderboard.error && (
+            <Card className="p-6 text-sm" style={{ color: "#991b1b", backgroundColor: "#fef2f2" }}>
+              Could not load leaderboard: {leaderboard.error}
+            </Card>
+          )}
+          {!leaderboard.loading && !leaderboard.error && Array.isArray(leaderboard.entries) && leaderboard.entries.length === 0 && (
+            <Card className="p-6 text-sm" style={{ color: COLORS.muted }}>
+              No published leaderboard entries yet. When admins push completed evaluations, they'll appear here grouped by disease.
+            </Card>
+          )}
+          {!leaderboard.loading && !leaderboard.error && Array.isArray(leaderboard.entries) && leaderboard.entries.length > 0 && (
+            <div className="space-y-5">
+              {Object.entries(
+                leaderboard.entries.reduce((acc, e) => {
+                  const k = e.disease_group || "Other";
+                  (acc[k] = acc[k] || []).push(e);
+                  return acc;
+                }, {}),
+              ).map(([group, rows]) => (
+                <Card key={group} className="overflow-hidden">
+                  <div className="flex flex-col gap-2 border-b px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6" style={{ borderColor: COLORS.line }}>
+                    <div>
+                      <h3 className="text-lg font-semibold sm:text-xl" style={{ color: COLORS.text }}>{group} Leaderboard</h3>
+                    </div>
                   </div>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="min-w-[720px] w-full text-left text-sm">
-                    <thead style={{ backgroundColor: COLORS.navySoft, color: COLORS.text }}>
-                      <tr>{["Rank", "Pipeline", "Dataset", "Primary Score", "Metric", "Published"].map((heading) => <th key={heading} className="px-4 py-3 font-medium">{heading}</th>)}</tr>
-                    </thead>
-                    <tbody>
-                      {rows.map((entry, idx) => (
-                        <tr key={`${group}-${entry.pipeline}`} className={idx !== rows.length - 1 ? "border-t" : ""} style={{ borderColor: COLORS.line }}>
-                          <td className="px-4 py-4" style={{ color: COLORS.text }}>#{entry.rank}</td>
-                          <td className="px-4 py-4" style={{ color: COLORS.text }}>{entry.pipeline}</td>
-                          <td className="px-4 py-4" style={{ color: COLORS.muted }}>{entry.dataset}</td>
-                          <td className="px-4 py-4"><span className="rounded-full border px-3 py-1 text-xs" style={{ borderColor: COLORS.line, backgroundColor: COLORS.soft, color: COLORS.navy }}>{entry.score.toFixed(2)}</span></td>
-                          <td className="px-4 py-4" style={{ color: COLORS.muted }}>{entry.metric}</td>
-                          <td className="px-4 py-4" style={{ color: COLORS.muted }}>{entry.published}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </Card>
-            ))}
-          </div>
+                  <div className="overflow-x-auto">
+                    <table className="min-w-[720px] w-full text-left text-sm">
+                      <thead style={{ backgroundColor: COLORS.navySoft, color: COLORS.text }}>
+                        <tr>{["Rank", "Pipeline", "Dataset", "Primary Score", "Metric", "Published"].map((heading) => <th key={heading} className="px-4 py-3 font-medium">{heading}</th>)}</tr>
+                      </thead>
+                      <tbody>
+                        {rows.map((entry, idx) => (
+                          <tr key={entry.id ?? `${group}-${idx}`} className={idx !== rows.length - 1 ? "border-t" : ""} style={{ borderColor: COLORS.line }}>
+                            <td className="px-4 py-4" style={{ color: COLORS.text }}>#{entry.rank ?? entry.overall_rank ?? idx + 1}</td>
+                            <td className="px-4 py-4" style={{ color: COLORS.text }}>{entry.pipeline}</td>
+                            <td className="px-4 py-4" style={{ color: COLORS.muted }}>{entry.dataset}</td>
+                            <td className="px-4 py-4"><span className="rounded-full border px-3 py-1 text-xs" style={{ borderColor: COLORS.line, backgroundColor: COLORS.soft, color: COLORS.navy }}>{typeof entry.score === "number" ? entry.score.toFixed(2) : entry.score}</span></td>
+                            <td className="px-4 py-4" style={{ color: COLORS.muted }}>{entry.metric_label || entry.metric}</td>
+                            <td className="px-4 py-4" style={{ color: COLORS.muted }}>{entry.published_at ? new Date(entry.published_at).toISOString().slice(0, 10) : ""}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          )}
         </PageShell>
       )}
 

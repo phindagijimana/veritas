@@ -1,14 +1,18 @@
 """atlas phase a
 
 Revision ID: 0010_atlas_phase_a
-Revises: 0009_leaderboard_backfill
+Revises: 0008_leaderboard_grouping
 Create Date: 2026-03-10
+
+Note: this file originally referenced ``0009_leaderboard_backfill`` which never
+landed in the repo (broken chain on fresh DB). Repointed to ``0008`` so
+``alembic upgrade head`` works from an empty database.
 """
 from alembic import op
 import sqlalchemy as sa
 
 revision = "0010_atlas_phase_a"
-down_revision = "0009_leaderboard_backfill"
+down_revision = "0008_leaderboard_grouping"
 branch_labels = None
 depends_on = None
 
