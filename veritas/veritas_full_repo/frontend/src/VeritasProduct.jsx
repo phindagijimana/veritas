@@ -2,12 +2,15 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   connectHpc,
+  createApiToken,
   createEvaluationRequest,
+  fetchApiTokens,
   fetchEvaluationRequests,
   fetchHpcSummary,
   fetchLeaderboard,
   fetchPipelines,
   previewSlurmJob,
+  revokeApiToken,
   submitSlurmJob,
   testHpcConnection,
 } from "./api/veritasClient.js";
@@ -31,6 +34,7 @@ const NAV_ITEMS = [
   { id: "atlas_api", label: "Atlas API access" },
   { id: "atlas_admin", label: "Atlas admin" },
   { id: "admin", label: "Veritas admin" },
+  { id: "tokens", label: "API tokens" },
 ];
 
 const INITIAL_API_INQUIRIES = [
@@ -442,6 +446,10 @@ export default function VeritasApp({ currentUser = null, onLogout = null } = {})
   const [userRequestSubmit, setUserRequestSubmit] = useState({ loading: false, error: null, success: null });
   const [requestsFetchError, setRequestsFetchError] = useState(null);
   const [leaderboard, setLeaderboard] = useState({ loading: false, error: null, entries: null });
+  const [tokens, setTokens] = useState({ loading: false, error: null, items: null });
+  const [tokenForm, setTokenForm] = useState({ label: "", expiresInDays: "" });
+  const [tokenSubmit, setTokenSubmit] = useState({ loading: false, error: null });
+  const [createdToken, setCreatedToken] = useState(null); // { token, prefix, label }
   const [pipelineDraft, setPipelineDraft] = useState({
     name: "my-biomarker",
     title: "My biomarker pipeline",
@@ -679,6 +687,60 @@ reports:
       cancelled = true;
     };
   }, [page]);
+
+  const reloadTokens = useCallback(async () => {
+    setTokens({ loading: true, error: null, items: null });
+    const res = await fetchApiTokens();
+    if (res.ok) setTokens({ loading: false, error: null, items: res.data });
+    else setTokens({ loading: false, error: res.message, items: null });
+  }, []);
+
+  useEffect(() => {
+    if (page !== "tokens" || !isVeritasApiConfigured()) return;
+    let cancelled = false;
+    (async () => {
+      const res = await fetchApiTokens();
+      if (cancelled) return;
+      if (res.ok) setTokens({ loading: false, error: null, items: res.data });
+      else setTokens({ loading: false, error: res.message, items: null });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [page]);
+
+  const submitToken = useCallback(
+    async (e) => {
+      e?.preventDefault?.();
+      const label = tokenForm.label.trim();
+      if (!label) {
+        setTokenSubmit({ loading: false, error: "Label is required." });
+        return;
+      }
+      setTokenSubmit({ loading: true, error: null });
+      const res = await createApiToken({ label, expiresInDays: tokenForm.expiresInDays || null });
+      setTokenSubmit({ loading: false, error: res.ok ? null : res.message });
+      if (res.ok) {
+        setCreatedToken({
+          token: res.data.token,
+          prefix: res.data.data?.prefix,
+          label: res.data.data?.label,
+        });
+        setTokenForm({ label: "", expiresInDays: "" });
+        reloadTokens();
+      }
+    },
+    [tokenForm, reloadTokens],
+  );
+
+  const handleRevokeToken = useCallback(
+    async (id) => {
+      const res = await revokeApiToken(id);
+      if (res.ok || res.status === 204) reloadTokens();
+      else setTokens((t) => ({ ...t, error: res.message }));
+    },
+    [reloadTokens],
+  );
 
   const navButton = (item, mobile = false) => {
     const active = page === item.id;
@@ -1546,6 +1608,102 @@ reports:
               )}
             </Card>
           </div>
+        </PageShell>
+      )}
+
+      {page === "tokens" && (
+        <PageShell>
+          <SectionTitle title="API tokens" subtitle="Personal access tokens for programmatic use. The token value is shown only once at creation — copy it immediately." />
+
+          <Card className="mb-5 p-5 sm:p-6">
+            <h3 className="text-lg font-semibold" style={{ color: COLORS.text }}>Create a new token</h3>
+            <form className="mt-4 grid gap-3 sm:grid-cols-3" onSubmit={submitToken}>
+              <TextField label="Label" placeholder="e.g. ci-laptop, github-actions" value={tokenForm.label} onChange={(v) => setTokenForm({ ...tokenForm, label: v })} />
+              <TextField label="Expires in days (optional)" placeholder="30" value={tokenForm.expiresInDays} onChange={(v) => setTokenForm({ ...tokenForm, expiresInDays: v.replace(/[^0-9]/g, "") })} />
+              <div className="flex items-end">
+                <button type="submit" disabled={tokenSubmit.loading} className="w-full rounded-full px-5 py-3 font-medium text-white" style={{ backgroundColor: COLORS.navy, opacity: tokenSubmit.loading ? 0.6 : 1 }}>
+                  {tokenSubmit.loading ? "Creating…" : "Create token"}
+                </button>
+              </div>
+            </form>
+            {tokenSubmit.error && <StatusText message={tokenSubmit.error} error />}
+          </Card>
+
+          {createdToken && (
+            <Card className="mb-5 p-5 sm:p-6" style={{ borderColor: "#fde68a", backgroundColor: "#fffbeb" }}>
+              <h3 className="text-base font-semibold" style={{ color: "#92400e" }}>New token created — copy it now</h3>
+              <p className="mt-1 text-sm" style={{ color: "#92400e" }}>
+                This is the only time the full token will be shown. Label: <strong>{createdToken.label}</strong>
+              </p>
+              <div className="mt-3 flex items-center gap-2">
+                <code className="flex-1 break-all rounded-lg border px-3 py-2 font-mono text-sm" style={{ borderColor: COLORS.line, backgroundColor: "#ffffff", color: COLORS.text }}>{createdToken.token}</code>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (typeof navigator !== "undefined" && navigator.clipboard) navigator.clipboard.writeText(createdToken.token);
+                  }}
+                  className="rounded-full border px-4 py-2 text-sm font-medium"
+                  style={{ borderColor: COLORS.line, color: COLORS.navy }}
+                >
+                  Copy
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCreatedToken(null)}
+                  className="rounded-full border px-4 py-2 text-sm font-medium"
+                  style={{ borderColor: COLORS.line, color: COLORS.muted }}
+                >
+                  Dismiss
+                </button>
+              </div>
+            </Card>
+          )}
+
+          <Card className="overflow-hidden">
+            <div className="flex items-center justify-between border-b px-5 py-4 sm:px-6" style={{ borderColor: COLORS.line }}>
+              <h3 className="text-lg font-semibold" style={{ color: COLORS.text }}>Your tokens</h3>
+              <button type="button" onClick={reloadTokens} className="text-xs font-medium underline" style={{ color: COLORS.muted }}>Refresh</button>
+            </div>
+            {tokens.loading && <div className="p-5 text-sm" style={{ color: COLORS.muted }}>Loading…</div>}
+            {!tokens.loading && tokens.error && (
+              <div className="p-5 text-sm" style={{ color: "#991b1b", backgroundColor: "#fef2f2" }}>{tokens.error}</div>
+            )}
+            {!tokens.loading && !tokens.error && Array.isArray(tokens.items) && tokens.items.length === 0 && (
+              <div className="p-5 text-sm" style={{ color: COLORS.muted }}>You don't have any tokens yet. Use the form above to create one.</div>
+            )}
+            {!tokens.loading && !tokens.error && Array.isArray(tokens.items) && tokens.items.length > 0 && (
+              <div className="overflow-x-auto">
+                <table className="min-w-[720px] w-full text-left text-sm">
+                  <thead style={{ backgroundColor: COLORS.navySoft, color: COLORS.text }}>
+                    <tr>{["Label", "Prefix", "Created", "Last used", "Expires", "Status", ""].map((h) => <th key={h} className="px-4 py-3 font-medium">{h}</th>)}</tr>
+                  </thead>
+                  <tbody>
+                    {tokens.items.map((t, idx) => {
+                      const revoked = t.revoked_at != null;
+                      const expired = !revoked && t.expires_at && new Date(t.expires_at) <= new Date();
+                      const statusLabel = revoked ? "Revoked" : expired ? "Expired" : "Active";
+                      const statusColor = revoked ? "#991b1b" : expired ? "#9a3412" : "#166534";
+                      return (
+                        <tr key={t.id} className={idx !== tokens.items.length - 1 ? "border-t" : ""} style={{ borderColor: COLORS.line }}>
+                          <td className="px-4 py-3" style={{ color: COLORS.text }}>{t.label}</td>
+                          <td className="px-4 py-3 font-mono text-xs" style={{ color: COLORS.muted }}>{t.prefix}…</td>
+                          <td className="px-4 py-3" style={{ color: COLORS.muted }}>{t.created_at ? new Date(t.created_at).toISOString().slice(0, 16).replace("T", " ") : ""}</td>
+                          <td className="px-4 py-3" style={{ color: COLORS.muted }}>{t.last_used_at ? new Date(t.last_used_at).toISOString().slice(0, 16).replace("T", " ") : "Never"}</td>
+                          <td className="px-4 py-3" style={{ color: COLORS.muted }}>{t.expires_at ? new Date(t.expires_at).toISOString().slice(0, 10) : "Never"}</td>
+                          <td className="px-4 py-3"><span className="rounded-full border px-3 py-1 text-xs font-medium" style={{ borderColor: COLORS.line, color: statusColor }}>{statusLabel}</span></td>
+                          <td className="px-4 py-3">
+                            {!revoked && (
+                              <button type="button" onClick={() => handleRevokeToken(t.id)} className="text-xs font-medium underline" style={{ color: "#991b1b" }}>Revoke</button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
         </PageShell>
       )}
 

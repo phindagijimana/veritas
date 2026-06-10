@@ -130,6 +130,34 @@ export function logout() {
   clearAuthToken();
 }
 
+/**
+ * GET /api/v1/auth/tokens — current user's PATs (no plaintext).
+ */
+export async function fetchApiTokens(timeoutMs = 15000) {
+  const r = await apiFetch("/auth/tokens", { timeoutMs });
+  if (!r.ok) return r;
+  return { ok: true, data: Array.isArray(r.data) ? r.data : [] };
+}
+
+/**
+ * POST /api/v1/auth/tokens — returns { data: <item>, token: <plaintext shown once> }.
+ */
+export async function createApiToken({ label, expiresInDays }, timeoutMs = 15000) {
+  const body = { label };
+  if (expiresInDays) body.expires_in_days = Number(expiresInDays);
+  const r = await apiFetch("/auth/tokens", { method: "POST", body, timeoutMs });
+  if (!r.ok) return r;
+  // The endpoint returns the wrapper { data: ..., token: ... } directly (not nested in another data).
+  return { ok: true, data: r.data };
+}
+
+/**
+ * DELETE /api/v1/auth/tokens/{id} — revoke. 204 on success.
+ */
+export async function revokeApiToken(id, timeoutMs = 10000) {
+  return apiFetch(`/auth/tokens/${encodeURIComponent(String(id))}`, { method: "DELETE", timeoutMs });
+}
+
 /* ───────────── pipelines ───────────── */
 
 export async function fetchPipelines(timeoutMs = 15000) {
