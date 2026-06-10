@@ -5,6 +5,15 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ATLAS_DIR="$ROOT/atlas_api/atlas_api_app"
 
+if [[ ! -d "$ATLAS_DIR" ]] || [[ ! -f "$ATLAS_DIR/pyproject.toml" ]]; then
+  echo "error: Atlas API app not found at $ATLAS_DIR (expected validator checkout with atlas_api/atlas_api_app/pyproject.toml)." >&2
+  exit 1
+fi
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "error: python3 is not on PATH." >&2
+  exit 1
+fi
+
 _py() {
   if [[ -x "$ATLAS_DIR/.venv/bin/python" ]]; then
     echo "$ATLAS_DIR/.venv/bin/python"

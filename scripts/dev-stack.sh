@@ -48,9 +48,9 @@ case "$cmd" in
     docker compose -f "$ATLAS_COMPOSE" -p atlas-dev up -d
     docker compose -f "$VERITAS_COMPOSE" -p veritas-dev up -d
     echo ""
-    echo "Started. Apply migrations:"
-    echo "  (cd atlas_api/atlas_api_app && python -m alembic upgrade head)"
-    echo "  (cd veritas/veritas_full_repo/backend && python -m alembic upgrade head)"
+    echo "Started. Apply migrations from repo root:"
+    echo "  ./api migrate"
+    echo "  ./platform migrate"
     ;;
   down)
     docker compose -f "$ATLAS_COMPOSE" -p atlas-dev down

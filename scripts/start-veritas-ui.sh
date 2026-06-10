@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Veritas frontend (Vite) on port 7000 — API should be on 6000 (./platform start).
+# Veritas frontend (Vite) on port 7000 — API on 6000 (./platform start).
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FE="$ROOT/veritas/veritas_full_repo/frontend"

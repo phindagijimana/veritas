@@ -5,8 +5,8 @@ This refreshed bundle contains:
 - `frontend/` — Veritas UI (Vite + React + Tailwind). **Atlas API access** collects inquiries; **Atlas admin** reviews them. **Veritas admin** covers validation/HPC operations (in-memory demo until APIs are wired).
 
 ## Ports
-- Frontend: `7000`
-- Backend: `6000`
+- Frontend (Vite): `7000`
+- Backend (API): `6000`
 
 Install: `cd frontend && npm install && npm run dev`
 

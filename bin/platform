@@ -5,6 +5,15 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VERITAS_DIR="$ROOT/veritas/veritas_full_repo/backend"
 
+if [[ ! -d "$VERITAS_DIR" ]] || [[ ! -f "$VERITAS_DIR/pyproject.toml" ]]; then
+  echo "error: Veritas backend not found at $VERITAS_DIR (expected validator checkout with veritas/veritas_full_repo/backend/pyproject.toml)." >&2
+  exit 1
+fi
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "error: python3 is not on PATH." >&2
+  exit 1
+fi
+
 _py() {
   if [[ -x "$VERITAS_DIR/.venv/bin/python" ]]; then
     echo "$VERITAS_DIR/.venv/bin/python"

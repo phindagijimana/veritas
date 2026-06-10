@@ -6,7 +6,7 @@ Clinical AI validation stack: **Atlas** exposes dataset access, staging, and pol
 |-----------|------|--------------|
 | **Atlas Data API** | Datasets, staging, grants, Pennsieve-backed public data | `8000` |
 | **Veritas Platform API** | Pipelines, jobs, HPC, MELD/IDEAS workflows, artifacts | `6000` |
-| **Veritas UI** (optional) | Product frontend (Vite) | `7000` |
+| **Veritas UI** (optional) | Product frontend (Vite dev server) | `7000` |
 
 ---
 
@@ -39,8 +39,10 @@ cp atlas_api/atlas_api_app/.env.example atlas_api/atlas_api_app/.env
 ```bash
 ./platform install
 cp veritas/veritas_full_repo/backend/env.local.sqlite.example veritas/veritas_full_repo/backend/.env
-./platform start       # http://127.0.0.1:6000 — GET /health
+./platform start       # API: http://127.0.0.1:6000 — GET /api/v1/health
 ```
+
+**`http://127.0.0.1:7000` is the Veritas web UI** (Vite). Start it with `cd veritas/veritas_full_repo/frontend && npm run dev`. The UI proxies `/api` to the API on **6000** (see `frontend/vite.config.js`).
 
 For PostgreSQL/Redis (production-like), use `veritas/veritas_full_repo/backend/docker-compose.yml`, copy `backend/.env.example` → `.env`, then `./platform migrate && ./platform start`.
 
@@ -102,6 +104,9 @@ Full stack with Docker: `./scripts/dev-stack.sh up` (see script for Postgres por
 | Script | Service |
 |--------|---------|
 | `./api` | Atlas API (`bin/api`) — `install`, `start`, `migrate`, `test`, `dev-token` |
+| `./atlas` | Same as `./api` (wrapper) |
 | `./platform` | Veritas API (`bin/platform`) — `install`, `start`, `migrate`, `test`, `worker` |
+| `./bin/veritas` | Same as `./platform` (wrapper) |
+| `scripts/verify-clis.sh` | Smoke-test `./api` / `./platform` (`--help` and `start --help`) |
 
 Environment overrides: `ATLAS_HOST` / `ATLAS_PORT`, `VERITAS_HOST` / `VERITAS_PORT`.
