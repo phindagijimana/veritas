@@ -4,9 +4,11 @@ import {
   connectHpc,
   createApiToken,
   createEvaluationRequest,
+  downloadReportFile,
   fetchApiTokens,
   fetchEvaluationRequests,
   fetchHpcSummary,
+  fetchJobLogs,
   fetchLeaderboard,
   fetchPipelines,
   previewSlurmJob,
@@ -450,6 +452,9 @@ export default function VeritasApp({ currentUser = null, onLogout = null } = {})
   const [tokenForm, setTokenForm] = useState({ label: "", expiresInDays: "" });
   const [tokenSubmit, setTokenSubmit] = useState({ loading: false, error: null });
   const [createdToken, setCreatedToken] = useState(null); // { token, prefix, label }
+  const [reportDownload, setReportDownload] = useState({ pending: null, error: null });
+  const [logsForm, setLogsForm] = useState({ jobId: "", stream: "stdout" });
+  const [logsView, setLogsView] = useState({ loading: false, error: null, data: null });
   const [pipelineDraft, setPipelineDraft] = useState({
     name: "my-biomarker",
     title: "My biomarker pipeline",
@@ -1599,6 +1604,103 @@ reports:
                     >
                       Send report to requester
                     </button>
+                    <div className="rounded-2xl border bg-white p-4" style={{ borderColor: COLORS.line }}>
+                      <h4 className="text-sm font-semibold" style={{ color: COLORS.text }}>Job logs viewer</h4>
+                      <p className="mt-1 text-xs" style={{ color: COLORS.muted }}>
+                        Paste a job's DB id (from <code className="rounded bg-slate-100 px-1">/api/v1/jobs</code>'s <code className="rounded bg-slate-100 px-1">job_id</code> field — the integer, not the SLURM- prefixed string) and pick stdout or stderr. Returns the last 256 KB.
+                      </p>
+                      <form
+                        className="mt-3 flex flex-wrap gap-2"
+                        onSubmit={async (e) => {
+                          e.preventDefault();
+                          const id = logsForm.jobId.trim();
+                          if (!id) return;
+                          setLogsView({ loading: true, error: null, data: null });
+                          const res = await fetchJobLogs(id, logsForm.stream);
+                          if (res.ok) setLogsView({ loading: false, error: null, data: res.data });
+                          else setLogsView({ loading: false, error: res.message || `HTTP ${res.status}`, data: null });
+                        }}
+                      >
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          value={logsForm.jobId}
+                          onChange={(e) => setLogsForm({ ...logsForm, jobId: e.target.value.replace(/[^0-9]/g, "") })}
+                          placeholder="Job id (integer)"
+                          className="w-32 rounded-full border px-3 py-2 text-xs"
+                          style={{ borderColor: COLORS.line, color: COLORS.text }}
+                        />
+                        <select
+                          value={logsForm.stream}
+                          onChange={(e) => setLogsForm({ ...logsForm, stream: e.target.value })}
+                          className="rounded-full border px-3 py-2 text-xs"
+                          style={{ borderColor: COLORS.line, color: COLORS.text }}
+                        >
+                          <option value="stdout">stdout</option>
+                          <option value="stderr">stderr</option>
+                        </select>
+                        <button
+                          type="submit"
+                          disabled={logsView.loading || !logsForm.jobId}
+                          className="rounded-full border px-4 py-2 text-xs font-medium disabled:opacity-40"
+                          style={{ borderColor: COLORS.line, color: COLORS.navy }}
+                        >
+                          {logsView.loading ? "Fetching…" : "Fetch logs"}
+                        </button>
+                      </form>
+                      {logsView.error && (
+                        <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs" style={{ color: "#991b1b" }}>{logsView.error}</p>
+                      )}
+                      {logsView.data && !logsView.data.available && (
+                        <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs" style={{ color: "#92400e" }}>{logsView.data.message}</p>
+                      )}
+                      {logsView.data && logsView.data.available && (
+                        <div className="mt-3">
+                          <div className="mb-1 flex items-center justify-between text-[0.7rem]" style={{ color: COLORS.muted }}>
+                            <span>{logsView.data.path}</span>
+                            <span>
+                              {logsView.data.size} bytes
+                              {logsView.data.truncated ? " · showing last 256 KB" : ""}
+                            </span>
+                          </div>
+                          <pre className="max-h-72 overflow-auto rounded-lg border bg-slate-50 p-3 text-[0.7rem] leading-snug" style={{ borderColor: COLORS.line, color: COLORS.text }}>
+{logsView.data.content || "(empty)"}
+                          </pre>
+                        </div>
+                      )}
+                    </div>
+                    <div className="rounded-2xl border bg-white p-4" style={{ borderColor: COLORS.line }}>
+                      <h4 className="text-sm font-semibold" style={{ color: COLORS.text }}>Download report artifacts</h4>
+                      <p className="mt-1 text-xs" style={{ color: COLORS.muted }}>
+                        Fetches the report file with your bearer token and saves it locally. 404 means the requested format wasn't generated for this request.
+                      </p>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {["pdf", "json", "csv", "html"].map((fmt) => {
+                          const pending = reportDownload.pending === fmt;
+                          return (
+                            <button
+                              key={fmt}
+                              type="button"
+                              disabled={!selectedRequest || reportDownload.pending !== null}
+                              onClick={async () => {
+                                setReportDownload({ pending: fmt, error: null });
+                                const res = await downloadReportFile(selectedRequest.id, fmt);
+                                setReportDownload({ pending: null, error: res.ok ? null : `${fmt.toUpperCase()}: ${res.message || `HTTP ${res.status}`}` });
+                              }}
+                              className="rounded-full border px-4 py-2 text-xs font-medium disabled:opacity-40"
+                              style={{ borderColor: COLORS.line, color: COLORS.navy }}
+                            >
+                              {pending ? `Downloading ${fmt.toUpperCase()}…` : `Download ${fmt.toUpperCase()}`}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {reportDownload.error && (
+                        <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs" style={{ color: "#991b1b" }}>
+                          {reportDownload.error}
+                        </p>
+                      )}
+                    </div>
                     <p className="text-xs leading-relaxed" style={{ color: COLORS.muted }}>
                       <code className="rounded bg-white px-1">POST …/jobs/preview/{"{request_id}"}</code> (dry run) and{" "}
                       <code className="rounded bg-white px-1">POST …/jobs/submit/{"{request_id}"}</code> (Slurm sbatch on the cluster). Notify the requester when the report is ready.

@@ -200,6 +200,75 @@ export async function previewSlurmJob(requestId, body, timeoutMs = 90000) {
   });
 }
 
+/**
+ * GET /api/v1/jobs/{job_id}/logs?stream=stdout|stderr.
+ * Returns the last ~256 KB; `data.truncated` says whether the head was dropped.
+ */
+export async function fetchJobLogs(jobId, stream = "stdout", timeoutMs = 30000) {
+  const s = stream === "stderr" ? "stderr" : "stdout";
+  return apiFetch(`/jobs/${encodeURIComponent(String(jobId))}/logs?stream=${s}`, { timeoutMs });
+}
+
+/* ───────────── reports ───────────── */
+
+/**
+ * GET /api/v1/reports/{request_id} — full report detail including artifacts.
+ */
+export async function fetchReportDetail(requestId, timeoutMs = 15000) {
+  return apiFetch(`/reports/${encodeURIComponent(String(requestId))}`, { timeoutMs });
+}
+
+/**
+ * Download a report artifact (pdf/json/csv/html) as a blob, attaching the
+ * bearer token, and trigger a browser save.
+ *
+ * Returns { ok, status?, message? } so callers can render an inline error.
+ */
+export async function downloadReportFile(requestId, fmt, timeoutMs = 60000) {
+  if (!isVeritasApiConfigured()) {
+    return { ok: false, message: "Set VITE_VERITAS_API_BASE_URL." };
+  }
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const r = await fetch(
+      `${VERITAS_API_BASE_URL}/reports/${encodeURIComponent(String(requestId))}/download/${encodeURIComponent(fmt)}/file`,
+      {
+        method: "GET",
+        credentials: "omit",
+        headers: authHeaders(),
+        signal: controller.signal,
+      },
+    );
+    if (!r.ok) {
+      const text = await r.text();
+      const j = parseJsonSafe(text);
+      return { ok: false, status: r.status, message: formatErrorBody(j, text, r.status, r.statusText) };
+    }
+    const blob = await r.blob();
+    // Filename: prefer the Content-Disposition the server sets.
+    let filename = `${requestId}-report.${fmt.toLowerCase()}`;
+    const dispo = r.headers.get("Content-Disposition") || "";
+    const m = /filename="?([^";]+)"?/i.exec(dispo);
+    if (m) filename = m[1];
+    if (typeof document !== "undefined") {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, message: e?.name === "AbortError" ? "Download timed out." : e?.message || "Network error" };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 /* ───────────── leaderboard ───────────── */
 
 /**
