@@ -24,6 +24,7 @@ from app.core.config import (
     warn_dev_placeholder_secrets,
 )
 from app.core.security_headers import SecurityHeadersMiddleware
+from app.core.audit import AuditMiddleware
 from app.core.auth_rate_limit import AuthRateLimitMiddleware
 from app.core.rate_limit import limiter
 from app.core.request_limits import LimitRequestBodySizeMiddleware
@@ -256,6 +257,7 @@ app.add_middleware(
 app.add_middleware(LimitRequestBodySizeMiddleware)
 app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(AuthRateLimitMiddleware)
+app.add_middleware(AuditMiddleware)
 app.add_middleware(
     SecurityHeadersMiddleware,
     production=(settings.app_env or "").strip().lower() == "production",
