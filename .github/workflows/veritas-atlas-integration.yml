@@ -1,0 +1,134 @@
+name: Veritas ↔ Atlas live integration
+
+# Stands up a Postgres, runs Alembic for Atlas + Veritas, starts the Atlas API,
+# then runs Veritas integration tests with ATLAS_LIVE_TEST=1 so the shared-secret
+# handshake is exercised over real HTTP instead of being skipped.
+
+on:
+  push:
+    paths:
+      - "atlas_api/atlas_api_app/**"
+      - "veritas/veritas_full_repo/backend/**"
+      - ".github/workflows/veritas-atlas-integration.yml"
+  pull_request:
+    paths:
+      - "atlas_api/atlas_api_app/**"
+      - "veritas/veritas_full_repo/backend/**"
+      - ".github/workflows/veritas-atlas-integration.yml"
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: shared
+          POSTGRES_PASSWORD: shared
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U shared"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+
+    env:
+      SHARED_SECRET: ci-shared-secret-32bytes-minimum!!!
+      ATLAS_DB_URL: postgresql+psycopg2://shared:shared@localhost:5432/atlas_int
+      VERITAS_DB_URL: postgresql+psycopg://shared:shared@localhost:5432/veritas_int
+      ATLAS_PORT: "8000"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Create separate databases
+        env:
+          PGPASSWORD: shared
+        run: |
+          psql -h localhost -U shared -d postgres -c "CREATE DATABASE atlas_int;"
+          psql -h localhost -U shared -d postgres -c "CREATE DATABASE veritas_int;"
+
+      - name: Install Atlas
+        working-directory: atlas_api/atlas_api_app
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Alembic upgrade Atlas
+        working-directory: atlas_api/atlas_api_app
+        env:
+          ATLAS_DATABASE_URL: ${{ env.ATLAS_DB_URL }}
+          ATLAS_DATABASE_AUTO_CREATE_SCHEMA: "false"
+          ATLAS_SEED_DEMO_DATA_ON_STARTUP: "false"
+        run: python -m alembic upgrade head
+
+      - name: Install Veritas
+        working-directory: veritas/veritas_full_repo/backend
+        run: pip install -r requirements.txt
+
+      - name: Alembic upgrade Veritas
+        working-directory: veritas/veritas_full_repo/backend
+        env:
+          DATABASE_URL: ${{ env.VERITAS_DB_URL }}
+          DATABASE_AUTO_CREATE_SCHEMA: "false"
+          APP_ENV: development
+        run: python -m alembic upgrade head
+
+      - name: Start Atlas API in background
+        working-directory: atlas_api/atlas_api_app
+        env:
+          ATLAS_DATABASE_URL: ${{ env.ATLAS_DB_URL }}
+          ATLAS_DATABASE_AUTO_CREATE_SCHEMA: "false"
+          ATLAS_SEED_DEMO_DATA_ON_STARTUP: "true"
+          ATLAS_VERITAS_CLIENT_SECRET: ${{ env.SHARED_SECRET }}
+          ATLAS_API_PREFIX: /api/v1
+        run: |
+          nohup python -m uvicorn app.main:app --host 127.0.0.1 --port ${{ env.ATLAS_PORT }} > atlas.log 2>&1 &
+          echo $! > atlas.pid
+
+      - name: Wait for Atlas readiness
+        run: |
+          for i in $(seq 1 40); do
+            if curl -fsS "http://127.0.0.1:${{ env.ATLAS_PORT }}/ready" > /dev/null; then
+              echo "Atlas ready after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Atlas did not become ready in time" >&2
+          tail -n 200 atlas_api/atlas_api_app/atlas.log || true
+          exit 1
+
+      - name: Run Veritas integration tests (live Atlas)
+        working-directory: veritas/veritas_full_repo/backend
+        env:
+          ATLAS_LIVE_TEST: "1"
+          ATLAS_API_BASE_URL: http://127.0.0.1:8000/api/v1
+          ATLAS_API_CLIENT_ID: veritas
+          ATLAS_API_CLIENT_SECRET: ${{ env.SHARED_SECRET }}
+          DATABASE_URL: ${{ env.VERITAS_DB_URL }}
+          APP_ENV: development
+          HPC_MODE: mock
+          CELERY_TASK_ALWAYS_EAGER: "true"
+        run: python -m pytest tests/integration -m integration -v
+
+      - name: Atlas logs (on failure)
+        if: failure()
+        run: |
+          echo "===== atlas.log ====="
+          tail -n 400 atlas_api/atlas_api_app/atlas.log || true
+
+      - name: Stop Atlas
+        if: always()
+        run: |
+          if [ -f atlas_api/atlas_api_app/atlas.pid ]; then
+            kill "$(cat atlas_api/atlas_api_app/atlas.pid)" 2>/dev/null || true
+          fi

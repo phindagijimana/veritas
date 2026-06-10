@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from app.core.security import require_admin
 from app.schemas.atlas_phase_d import ExecuteStageRequest
 from app.services.atlas_phase_d_service import AtlasPhaseDService
 
@@ -12,7 +13,7 @@ STAGE_CACHE: dict[str, dict] = {}
 
 
 @router.post("/execute-stage")
-def execute_stage(payload: ExecuteStageRequest):
+def execute_stage(payload: ExecuteStageRequest, _=Depends(require_admin)):
     state = service.execute_stage(
         request_id=payload.request_id,
         atlas_dataset_id=payload.atlas_dataset_id,
@@ -31,7 +32,7 @@ def execute_stage(payload: ExecuteStageRequest):
 
 
 @router.post("/requests/{request_id}/staging-validate")
-def validate_staging(request_id: str):
+def validate_staging(request_id: str, _=Depends(require_admin)):
     cached = STAGE_CACHE.get(request_id)
     if not cached or not cached.get("staged_dataset_path"):
         raise HTTPException(status_code=404, detail="No staged dataset found for request.")

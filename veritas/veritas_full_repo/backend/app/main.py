@@ -5,7 +5,8 @@ from contextlib import asynccontextmanager
 import time
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
@@ -16,7 +17,12 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.api.router import api_router
 from app.api.routes.health import readiness as readiness_probe
-from app.core.config import get_settings, trusted_hosts_list, validate_production_settings
+from app.core.config import (
+    get_settings,
+    trusted_hosts_list,
+    validate_production_settings,
+    warn_dev_placeholder_secrets,
+)
 from app.core.security_headers import SecurityHeadersMiddleware
 from app.core.auth_rate_limit import AuthRateLimitMiddleware
 from app.core.rate_limit import limiter
@@ -208,6 +214,7 @@ def _ensure_meld_and_ideas_catalog(db) -> None:
 async def lifespan(_: FastAPI):
     cfg = get_settings()
     validate_production_settings(cfg)
+    warn_dev_placeholder_secrets(cfg)
     if cfg.database_auto_create_schema:
         Base.metadata.create_all(bind=engine)
     if cfg.seed_demo_data_on_startup:
@@ -261,6 +268,58 @@ app.include_router(api_router, prefix=settings.api_v1_prefix)
 
 Path(settings.artifact_root_dir).expanduser().mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(Path(settings.artifact_root_dir).expanduser())), name="static")
+
+
+def _root_payload() -> dict:
+    return {
+        "service": "veritas-api",
+        "docs": "/docs",
+        "health": "/health",
+        "ui_dev": (
+            "The Veritas web UI is Vite on http://127.0.0.1:7000 (`npm run dev` in veritas/veritas_full_repo/frontend). "
+            "This HTTP API defaults to port 6000 (`./platform start`); do not bind the API to 7000 while using the UI."
+        ),
+    }
+
+
+def _wants_browser_html(request: Request) -> bool:
+    """Browsers send Accept including text/html; curl default is */* (no text/html)."""
+    accept = (request.headers.get("accept") or "").lower()
+    return "text/html" in accept
+
+
+@app.get("/", include_in_schema=False)
+def browser_root_hint(request: Request):
+    """If you open this host:port in a browser expecting the React UI, you hit the API instead."""
+    if not _wants_browser_html(request):
+        return _root_payload()
+    body = """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Veritas API</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 42rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; color: #16325c; }
+    h1 { font-size: 1.25rem; }
+    code, pre { background: #f1f5f9; padding: 0.15rem 0.35rem; border-radius: 4px; font-size: 0.9em; }
+    pre { padding: 0.75rem; overflow: auto; }
+    a { color: #1d4ed8; }
+    .warn { background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
+  </style>
+</head>
+<body>
+  <h1>Veritas API</h1>
+  <p>This is the HTTP API (default port <code>6000</code>), not the React UI.</p>
+  <div class="warn">
+    If you expected the <strong>web app</strong>, open
+    <a href="http://127.0.0.1:7000/"><strong>http://127.0.0.1:7000</strong></a>
+    (Vite: <code>cd veritas/veritas_full_repo/frontend && npm run dev</code>). Keep this API on <code>6000</code> so port 7000 is free for Vite.
+  </div>
+  <p>API links: <a href="/docs">OpenAPI docs</a> · <a href="/health">GET /health</a></p>
+</body>
+</html>"""
+    return HTMLResponse(content=body)
 
 
 @app.get("/health", include_in_schema=False)

@@ -9,7 +9,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
 
-# Dev UI is often opened as either hostname; both must be allowed for browser CORS.
+# Dev UI (Vite) on 7000; it proxies /api to the API on 6000.
 _DEFAULT_DEV_UI_ORIGINS = ("http://localhost:7000", "http://127.0.0.1:7000")
 
 _PLACEHOLDER_SECRETS = frozenset(
@@ -78,7 +78,7 @@ class Settings(BaseSettings):
 
     # --- Artifacts & datasets ---
     artifact_root_dir: str = "./var/veritas_artifacts"
-    public_artifact_base_url: str = "http://localhost:6000/static"
+    public_artifact_base_url: str = "http://localhost:7000/static"
     storage_backend: Literal["local", "s3"] = "local"
     s3_endpoint_url: str = ""
     s3_access_key: str = ""
@@ -186,6 +186,25 @@ def trusted_hosts_list(settings: Settings) -> list[str] | None:
     if not raw:
         return None
     return [part.strip() for part in raw.split(",") if part.strip()]
+
+
+def warn_dev_placeholder_secrets(settings: Settings) -> None:
+    """Non-fatal startup warnings; validate_production_settings handles fatal cases."""
+    if (settings.app_env or "").strip().lower() == "production":
+        return
+    if settings.auth_enabled and settings.auth_secret_key.strip().lower() in _PLACEHOLDER_SECRETS:
+        logger.warning(
+            "AUTH_ENABLED=true with placeholder AUTH_SECRET_KEY; tokens are forgeable. "
+            "Set AUTH_SECRET_KEY before exposing this instance to anyone else.",
+        )
+    if (
+        settings.atlas_integration_mode == "live"
+        and settings.atlas_api_client_secret.strip().lower() in _PLACEHOLDER_SECRETS
+    ):
+        logger.warning(
+            "ATLAS_INTEGRATION_MODE=live with placeholder ATLAS_API_CLIENT_SECRET; "
+            "Atlas will reject these calls.",
+        )
 
 
 def validate_production_settings(settings: Settings) -> None:

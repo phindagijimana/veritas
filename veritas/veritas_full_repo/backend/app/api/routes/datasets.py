@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from app.core.security import get_current_user, require_admin
 from app.db.session import get_db
 from app.schemas.dataset import (
     DatasetCreate,
@@ -40,12 +41,12 @@ def get_dataset(dataset_ref: str, db: Session = Depends(get_db)):
 
 
 @router.post("", response_model=DatasetItemResponse)
-def create_dataset(payload: DatasetCreate, db: Session = Depends(get_db)):
+def create_dataset(payload: DatasetCreate, db: Session = Depends(get_db), _=Depends(require_admin)):
     return {"data": DatasetService.create(db, payload)}
 
 
 @router.post("/{dataset_ref}/validate", response_model=DatasetValidationResponse)
-def validate_dataset(dataset_ref: str, db: Session = Depends(get_db)):
+def validate_dataset(dataset_ref: str, db: Session = Depends(get_db), _=Depends(get_current_user)):
     result = DatasetValidationService.validate_by_ref(db, dataset_ref)
     if not result:
         raise HTTPException(status_code=404, detail="Dataset not found")

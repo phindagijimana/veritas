@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.security import require_admin
 from app.db.session import get_db
 from app.schemas.hpc import (
     HPCConnectionConfig,
@@ -29,7 +30,7 @@ def list_hpc_connections(db: Session = Depends(get_db)):
 
 
 @router.post("/connect", response_model=HPCConnectionResponse)
-def connect_hpc(payload: HPCConnectionConfig, db: Session = Depends(get_db)):
+def connect_hpc(payload: HPCConnectionConfig, db: Session = Depends(get_db), _=Depends(require_admin)):
     try:
         return {"data": HPCConnectionService.connect(db, payload)}
     except ValueError as exc:
@@ -37,7 +38,7 @@ def connect_hpc(payload: HPCConnectionConfig, db: Session = Depends(get_db)):
 
 
 @router.post("/test-connection", response_model=HPCConnectionProbeResponse)
-def test_hpc_connection(payload: HPCConnectionConfig, db: Session = Depends(get_db)):
+def test_hpc_connection(payload: HPCConnectionConfig, db: Session = Depends(get_db), _=Depends(require_admin)):
     try:
         row = HPCConnectionService.test_connection(db, payload)
         probe = HPCConnectionProbeRead(

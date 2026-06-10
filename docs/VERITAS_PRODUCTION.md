@@ -9,9 +9,10 @@
 
 ## API process
 
-- **Development:** `uvicorn app.main:app --host 0.0.0.0 --port 6000`
+- **Development:** `uvicorn app.main:app --host 0.0.0.0 --port 6000` (same default as `./platform start` / `VERITAS_PORT`)
 - **Production:** **`gunicorn`** with **`uvicorn.workers.UvicornWorker`** (see `backend/Dockerfile`). Override worker count: **`WEB_CONCURRENCY`**.
 - **Celery:** run **`./platform worker`** (or your process manager) with the **same** env as the API.
+- **Celery beat** (periodic job monitor sweep): `celery -A app.celery_app.celery_app beat`. Without beat, jobs only transition state when `POST /jobs/monitor/sweep` is called manually. Interval comes from `JOB_MONITOR_INTERVAL_SECONDS` (default 30s).
 
 ## HTTP / security
 
@@ -48,3 +49,4 @@ Health: `curl -fsS http://127.0.0.1:6000/health`
 | CORS origins = production UI URLs | |
 | TLS termination (ingress / reverse proxy) | |
 | Celery worker + Redis if async queue enabled | |
+| Celery beat running (so job state advances without manual sweep POST) | |

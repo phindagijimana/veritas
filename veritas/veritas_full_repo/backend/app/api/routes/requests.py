@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.core.security import get_current_user
+from app.core.security import get_current_user, require_admin
 from app.db.session import get_db
 from app.schemas.request import (
     EvaluationRequestCreate,
@@ -38,7 +38,12 @@ def create_request(payload: EvaluationRequestCreate, db: Session = Depends(get_d
 
 
 @router.patch("/{request_id}/status", response_model=EvaluationRequestItemResponse)
-def update_request_status(request_id: str, payload: EvaluationRequestStatusUpdate, db: Session = Depends(get_db)):
+def update_request_status(
+    request_id: str,
+    payload: EvaluationRequestStatusUpdate,
+    db: Session = Depends(get_db),
+    _=Depends(require_admin),
+):
     try:
         item = RequestService.update_status(db, request_id, payload)
     except InvalidPhaseTransitionError as exc:

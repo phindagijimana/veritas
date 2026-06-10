@@ -1,305 +1,187 @@
 import { VERITAS_API_BASE_URL, isVeritasApiConfigured } from "../config.js";
 
+const TOKEN_STORAGE_KEY = "veritas.authToken";
+
+export function getAuthToken() {
+  try {
+    return typeof localStorage !== "undefined" ? localStorage.getItem(TOKEN_STORAGE_KEY) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function setAuthToken(token) {
+  try {
+    if (token) localStorage.setItem(TOKEN_STORAGE_KEY, token);
+    else localStorage.removeItem(TOKEN_STORAGE_KEY);
+  } catch {
+    /* ignore quota / privacy errors */
+  }
+}
+
+export function clearAuthToken() {
+  setAuthToken(null);
+}
+
 function abortAfter(ms) {
   const c = new AbortController();
   const t = setTimeout(() => c.abort(), ms);
   return { signal: c.signal, done: () => clearTimeout(t) };
 }
 
-/**
- * GET /api/v1/pipelines when base URL is configured.
- * @returns {Promise<{ data: unknown[] } | null>}
- */
-export async function fetchPipelines(timeoutMs = 15000) {
-  if (!isVeritasApiConfigured()) return null;
-  const { signal, done } = abortAfter(timeoutMs);
+function authHeaders(extra = {}) {
+  const token = getAuthToken();
+  const h = { Accept: "application/json", ...extra };
+  if (token) h.Authorization = `Bearer ${token}`;
+  return h;
+}
+
+function parseJsonSafe(text) {
   try {
-    const r = await fetch(`${VERITAS_API_BASE_URL}/pipelines`, {
-      signal,
-      credentials: "omit",
-      headers: { Accept: "application/json" },
-    });
-    if (!r.ok) return null;
-    return await r.json();
+    return text ? JSON.parse(text) : null;
   } catch {
     return null;
-  } finally {
-    done();
   }
 }
 
-/**
- * POST /api/v1/jobs/preview/{request_id} — same body as submit; no SSH/sbatch.
- * @param {string|number} requestId
- * @param {Record<string, unknown>} body SlurmJobSubmitRequest JSON
- * @returns {Promise<{ ok: true, data: object } | { ok: false, status?: number, message: string }>}
- */
-/**
- * GET /api/v1/hpc/summary — queue counts, active connection, hpc_mode.
- */
-export async function fetchHpcSummary(timeoutMs = 15000) {
-  if (!isVeritasApiConfigured()) {
-    return { ok: false, message: "Set VITE_VERITAS_API_BASE_URL." };
+function formatErrorBody(j, text, status, statusText) {
+  const detail = j?.detail;
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail.map((d) => (typeof d === "string" ? d : d?.msg || JSON.stringify(d))).join("; ");
   }
-  const { signal, done } = abortAfter(timeoutMs);
-  try {
-    const r = await fetch(`${VERITAS_API_BASE_URL}/hpc/summary`, {
-      signal,
-      credentials: "omit",
-      headers: { Accept: "application/json" },
-    });
-    const text = await r.text();
-    let j = null;
-    try {
-      j = text ? JSON.parse(text) : null;
-    } catch {
-      j = null;
-    }
-    if (!r.ok) {
-      const detail = j?.detail;
-      const msg = typeof detail === "string" ? detail : text || r.statusText;
-      return { ok: false, status: r.status, message: msg };
-    }
-    return { ok: true, data: j?.data ?? j };
-  } catch (e) {
-    return { ok: false, message: e?.name === "AbortError" ? "Timed out." : e?.message || "Network error" };
-  } finally {
-    done();
-  }
+  return text || statusText || `HTTP ${status}`;
 }
 
 /**
- * POST /api/v1/hpc/connect — SSH validation + persist active connection.
+ * Core fetch wrapper used by all client functions below.
+ * Attaches the bearer token automatically and normalizes JSON / error shapes.
  */
-export async function connectHpc(payload, timeoutMs = 60000) {
-  if (!isVeritasApiConfigured()) {
-    return { ok: false, message: "Set VITE_VERITAS_API_BASE_URL." };
-  }
-  const { signal, done } = abortAfter(timeoutMs);
-  try {
-    const r = await fetch(`${VERITAS_API_BASE_URL}/hpc/connect`, {
-      method: "POST",
-      credentials: "omit",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify(payload),
-      signal,
-    });
-    const text = await r.text();
-    let j = null;
-    try {
-      j = text ? JSON.parse(text) : null;
-    } catch {
-      j = null;
-    }
-    if (!r.ok) {
-      const detail = j?.detail;
-      let msg;
-      if (typeof detail === "string") msg = detail;
-      else if (Array.isArray(detail)) msg = detail.map((d) => (typeof d === "string" ? d : d?.msg || JSON.stringify(d))).join("; ");
-      else msg = text || r.statusText || `HTTP ${r.status}`;
-      return { ok: false, status: r.status, message: msg };
-    }
-    return { ok: true, data: j?.data ?? j };
-  } catch (e) {
-    return { ok: false, message: e?.name === "AbortError" ? "Timed out." : e?.message || "Network error" };
-  } finally {
-    done();
-  }
-}
-
-/**
- * POST /api/v1/hpc/test-connection — SSH only, no DB.
- */
-export async function testHpcConnection(payload, timeoutMs = 60000) {
-  if (!isVeritasApiConfigured()) {
-    return { ok: false, message: "Set VITE_VERITAS_API_BASE_URL." };
-  }
-  const { signal, done } = abortAfter(timeoutMs);
-  try {
-    const r = await fetch(`${VERITAS_API_BASE_URL}/hpc/test-connection`, {
-      method: "POST",
-      credentials: "omit",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify(payload),
-      signal,
-    });
-    const text = await r.text();
-    let j = null;
-    try {
-      j = text ? JSON.parse(text) : null;
-    } catch {
-      j = null;
-    }
-    if (!r.ok) {
-      const detail = j?.detail;
-      let msg;
-      if (typeof detail === "string") msg = detail;
-      else if (Array.isArray(detail)) msg = detail.map((d) => (typeof d === "string" ? d : d?.msg || JSON.stringify(d))).join("; ");
-      else msg = text || r.statusText || `HTTP ${r.status}`;
-      return { ok: false, status: r.status, message: msg };
-    }
-    return { ok: true, data: j?.data ?? j };
-  } catch (e) {
-    return { ok: false, message: e?.name === "AbortError" ? "Timed out." : e?.message || "Network error" };
-  } finally {
-    done();
-  }
-}
-
-/**
- * POST /api/v1/jobs/submit/{request_id} — Slurm job (SSH/sbatch; default API mode).
- */
-export async function submitSlurmJob(requestId, body, timeoutMs = 120000) {
-  if (!isVeritasApiConfigured()) {
+async function apiFetch(path, { method = "GET", body, timeoutMs = 15000, configRequired = true } = {}) {
+  if (configRequired && !isVeritasApiConfigured()) {
     return { ok: false, message: "Set VITE_VERITAS_API_BASE_URL (e.g. /api/v1 for the Vite proxy)." };
   }
   const { signal, done } = abortAfter(timeoutMs);
   try {
-    const r = await fetch(`${VERITAS_API_BASE_URL}/jobs/submit/${encodeURIComponent(String(requestId))}`, {
-      method: "POST",
+    const init = {
+      method,
       credentials: "omit",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify(body),
+      headers: authHeaders(body !== undefined ? { "Content-Type": "application/json" } : {}),
       signal,
-    });
+    };
+    if (body !== undefined) init.body = JSON.stringify(body);
+    const r = await fetch(`${VERITAS_API_BASE_URL}${path}`, init);
     const text = await r.text();
-    let j = null;
-    try {
-      j = text ? JSON.parse(text) : null;
-    } catch {
-      j = null;
-    }
+    const j = parseJsonSafe(text);
     if (!r.ok) {
-      const detail = j?.detail;
-      let msg;
-      if (typeof detail === "string") msg = detail;
-      else if (Array.isArray(detail)) msg = detail.map((d) => (typeof d === "string" ? d : d?.msg || JSON.stringify(d))).join("; ");
-      else msg = text || r.statusText || `HTTP ${r.status}`;
-      return { ok: false, status: r.status, message: msg };
+      return { ok: false, status: r.status, message: formatErrorBody(j, text, r.status, r.statusText) };
     }
     return { ok: true, data: j?.data ?? j };
   } catch (e) {
-    const name = e?.name;
-    return { ok: false, message: name === "AbortError" ? "Submit timed out." : e?.message || "Network error" };
+    return { ok: false, message: e?.name === "AbortError" ? "Request timed out." : e?.message || "Network error" };
   } finally {
     done();
   }
 }
 
+/* ───────────── auth ───────────── */
+
 /**
- * GET /api/v1/requests — evaluation requests for admin.
- * @returns {Promise<{ ok: true, data: object[] } | { ok: false, message: string, status?: number }>}
+ * GET /api/v1/auth/mode — { enabled, mode }. Used by LoginGate.
  */
-export async function fetchEvaluationRequests(timeoutMs = 15000) {
-  if (!isVeritasApiConfigured()) {
-    return { ok: false, message: "Set VITE_VERITAS_API_BASE_URL." };
-  }
-  const { signal, done } = abortAfter(timeoutMs);
-  try {
-    const r = await fetch(`${VERITAS_API_BASE_URL}/requests`, {
-      signal,
-      credentials: "omit",
-      headers: { Accept: "application/json" },
-    });
-    const text = await r.text();
-    let j = null;
-    try {
-      j = text ? JSON.parse(text) : null;
-    } catch {
-      j = null;
-    }
-    if (!r.ok) {
-      const detail = j?.detail;
-      let msg;
-      if (typeof detail === "string") msg = detail;
-      else if (Array.isArray(detail)) msg = detail.map((d) => (typeof d === "string" ? d : d?.msg || JSON.stringify(d))).join("; ");
-      else msg = text || r.statusText || `HTTP ${r.status}`;
-      return { ok: false, status: r.status, message: msg };
-    }
-    const list = j?.data;
-    return { ok: true, data: Array.isArray(list) ? list : [] };
-  } catch (e) {
-    return { ok: false, message: e?.name === "AbortError" ? "Timed out." : e?.message || "Network error" };
-  } finally {
-    done();
-  }
+export async function fetchAuthMode(timeoutMs = 5000) {
+  return apiFetch("/auth/mode", { timeoutMs });
 }
 
 /**
- * POST /api/v1/requests — user submits pipeline + dataset for evaluation (e.g. MELD on IDEAS).
- * @param {{ datasets: string[], pipeline: string, description?: string|null }} body
+ * POST /api/v1/auth/login — returns { access_token, user }. Stores token on success.
  */
-export async function createEvaluationRequest(body, timeoutMs = 30000) {
-  if (!isVeritasApiConfigured()) {
-    return { ok: false, message: "Set VITE_VERITAS_API_BASE_URL." };
-  }
-  const { signal, done } = abortAfter(timeoutMs);
-  try {
-    const r = await fetch(`${VERITAS_API_BASE_URL}/requests`, {
-      method: "POST",
-      credentials: "omit",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify(body),
-      signal,
-    });
-    const text = await r.text();
-    let j = null;
-    try {
-      j = text ? JSON.parse(text) : null;
-    } catch {
-      j = null;
-    }
-    if (!r.ok) {
-      const detail = j?.detail;
-      let msg;
-      if (typeof detail === "string") msg = detail;
-      else if (Array.isArray(detail)) msg = detail.map((d) => (typeof d === "string" ? d : d?.msg || JSON.stringify(d))).join("; ");
-      else msg = text || r.statusText || `HTTP ${r.status}`;
-      return { ok: false, status: r.status, message: msg };
-    }
-    return { ok: true, data: j?.data ?? j };
-  } catch (e) {
-    return { ok: false, message: e?.name === "AbortError" ? "Timed out." : e?.message || "Network error" };
-  } finally {
-    done();
-  }
+export async function login(email, password, timeoutMs = 15000) {
+  const r = await apiFetch("/auth/login", { method: "POST", body: { email, password }, timeoutMs });
+  if (!r.ok) return r;
+  // Login endpoint returns TokenResponse directly (not wrapped in { data: ... }).
+  const payload = r.data || {};
+  const token = payload.access_token;
+  if (token) setAuthToken(token);
+  return { ok: true, data: payload };
+}
+
+/**
+ * POST /api/v1/auth/register — role is always "researcher" server-side.
+ */
+export async function register(email, password, fullName, timeoutMs = 15000) {
+  const body = { email, password, full_name: fullName || null };
+  const r = await apiFetch("/auth/register", { method: "POST", body, timeoutMs });
+  if (!r.ok) return r;
+  const payload = r.data || {};
+  const token = payload.access_token;
+  if (token) setAuthToken(token);
+  return { ok: true, data: payload };
+}
+
+/**
+ * GET /api/v1/auth/me — { data: { email, role, ... } }.
+ */
+export async function fetchCurrentUser(timeoutMs = 10000) {
+  return apiFetch("/auth/me", { timeoutMs });
+}
+
+export function logout() {
+  clearAuthToken();
+}
+
+/* ───────────── pipelines ───────────── */
+
+export async function fetchPipelines(timeoutMs = 15000) {
+  if (!isVeritasApiConfigured()) return null;
+  const r = await apiFetch("/pipelines", { timeoutMs });
+  if (!r.ok) return null;
+  // Preserve legacy contract: returns `{ data: [...] }` or null.
+  return { data: r.data ?? [] };
+}
+
+/* ───────────── hpc ───────────── */
+
+export async function fetchHpcSummary(timeoutMs = 15000) {
+  return apiFetch("/hpc/summary", { timeoutMs });
+}
+
+export async function connectHpc(payload, timeoutMs = 60000) {
+  return apiFetch("/hpc/connect", { method: "POST", body: payload, timeoutMs });
+}
+
+export async function testHpcConnection(payload, timeoutMs = 60000) {
+  return apiFetch("/hpc/test-connection", { method: "POST", body: payload, timeoutMs });
+}
+
+/* ───────────── jobs ───────────── */
+
+export async function submitSlurmJob(requestId, body, timeoutMs = 120000) {
+  return apiFetch(`/jobs/submit/${encodeURIComponent(String(requestId))}`, {
+    method: "POST",
+    body,
+    timeoutMs,
+  });
 }
 
 export async function previewSlurmJob(requestId, body, timeoutMs = 90000) {
-  if (!isVeritasApiConfigured()) {
-    return { ok: false, message: "Set VITE_VERITAS_API_BASE_URL (e.g. /api/v1 for the Vite proxy)." };
-  }
-  const { signal, done } = abortAfter(timeoutMs);
-  try {
-    const r = await fetch(`${VERITAS_API_BASE_URL}/jobs/preview/${encodeURIComponent(String(requestId))}`, {
-      method: "POST",
-      credentials: "omit",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify(body),
-      signal,
-    });
-    const text = await r.text();
-    let j = null;
-    try {
-      j = text ? JSON.parse(text) : null;
-    } catch {
-      j = null;
-    }
-    if (!r.ok) {
-      const detail = j?.detail;
-      let msg;
-      if (typeof detail === "string") msg = detail;
-      else if (Array.isArray(detail)) msg = detail.map((d) => (typeof d === "string" ? d : d?.msg || JSON.stringify(d))).join("; ");
-      else msg = text || r.statusText || `HTTP ${r.status}`;
-      return { ok: false, status: r.status, message: msg };
-    }
-    return { ok: true, data: j?.data ?? j };
-  } catch (e) {
-    const name = e?.name;
-    return { ok: false, message: name === "AbortError" ? "Preview request timed out." : e?.message || "Network error" };
-  } finally {
-    done();
-  }
+  return apiFetch(`/jobs/preview/${encodeURIComponent(String(requestId))}`, {
+    method: "POST",
+    body,
+    timeoutMs,
+  });
+}
+
+/* ───────────── requests ───────────── */
+
+export async function fetchEvaluationRequests(timeoutMs = 15000) {
+  const r = await apiFetch("/requests", { timeoutMs });
+  if (!r.ok) return r;
+  return { ok: true, data: Array.isArray(r.data) ? r.data : [] };
+}
+
+export async function createEvaluationRequest(body, timeoutMs = 30000) {
+  return apiFetch("/requests", { method: "POST", body, timeoutMs });
 }
 
 export { isVeritasApiConfigured, VERITAS_API_BASE_URL };

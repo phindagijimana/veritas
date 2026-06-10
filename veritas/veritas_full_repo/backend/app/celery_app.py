@@ -22,6 +22,15 @@ def _make_celery() -> Celery:
         timezone="UTC",
         task_default_queue=s.rq_queue_name,
         task_soft_time_limit=s.rq_job_timeout_seconds,
+        # Periodic job monitor sweep (run `celery -A app.celery_app.celery_app beat`
+        # alongside the worker to drive this; without beat the schedule is inert).
+        beat_schedule={
+            "veritas.run_job_monitor_sweep": {
+                "task": "veritas.run_job_monitor_sweep",
+                "schedule": float(s.job_monitor_interval_seconds),
+                "options": {"queue": s.rq_queue_name},
+            },
+        },
     )
     return app
 

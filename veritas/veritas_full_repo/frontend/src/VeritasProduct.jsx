@@ -425,7 +425,7 @@ function Pill({ label, active = false, complete = false }) {
   );
 }
 
-export default function VeritasApp() {
+export default function VeritasApp({ currentUser = null, onLogout = null } = {}) {
   const [page, setPage] = useState("home");
   const [showHpcModal, setShowHpcModal] = useState(false);
   const [showSlurmModal, setShowSlurmModal] = useState(false);
@@ -724,9 +724,35 @@ reports:
             <div className="hidden items-center gap-1 rounded-full border p-1 lg:flex" style={{ borderColor: "rgba(255,255,255,0.15)", backgroundColor: "rgba(255,255,255,0.05)" }}>
               {NAV_ITEMS.map((item) => navButton(item))}
             </div>
+            {currentUser && onLogout && (
+              <div className="hidden items-center gap-2 lg:flex">
+                <div className="flex flex-col items-end leading-tight">
+                  <span className="text-xs font-semibold text-white truncate max-w-[12rem]">{currentUser.full_name || currentUser.email}</span>
+                  <span className="text-[0.65rem] uppercase tracking-wide" style={{ color: "rgba(219,234,254,0.8)" }}>{currentUser.role || "researcher"}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={onLogout}
+                  className="rounded-full border px-3 py-1 text-xs font-medium text-white transition hover:bg-white/10"
+                  style={{ borderColor: "rgba(255,255,255,0.25)", background: "rgba(255,255,255,0.05)" }}
+                >
+                  Log out
+                </button>
+              </div>
+            )}
           </div>
           <div className="mt-3 flex flex-wrap gap-2 lg:hidden" style={{ borderColor: "rgba(255,255,255,0.12)" }}>
             {NAV_ITEMS.map((item) => navButton(item, true))}
+            {currentUser && onLogout && (
+              <button
+                type="button"
+                onClick={onLogout}
+                className="rounded-full border px-3 py-1 text-xs font-medium"
+                style={{ borderColor: "rgba(255,255,255,0.25)", background: "rgba(255,255,255,0.05)", color: "#ffffff" }}
+              >
+                Log out ({currentUser.email})
+              </button>
+            )}
           </div>
         </div>
       </div>

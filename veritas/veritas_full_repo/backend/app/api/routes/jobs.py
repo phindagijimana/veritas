@@ -22,7 +22,12 @@ def list_jobs(db: Session = Depends(get_db)):
 
 
 @router.post("/preview/{request_id}", response_model=JobPreviewResponse)
-def preview_slurm_job(request_id: str, payload: SlurmJobSubmitRequest, db: Session = Depends(get_db)):
+def preview_slurm_job(
+    request_id: str,
+    payload: SlurmJobSubmitRequest,
+    db: Session = Depends(get_db),
+    _=Depends(get_current_user),
+):
     try:
         return {"data": JobService.preview_slurm_job(db, request_id, payload)}
     except ValueError as exc:
@@ -45,7 +50,12 @@ def get_job(
 
 
 @router.post("/submit/{request_id}", response_model=JobItemResponse)
-def submit_slurm_job(request_id: str, payload: SlurmJobSubmitRequest, db: Session = Depends(get_db)):
+def submit_slurm_job(
+    request_id: str,
+    payload: SlurmJobSubmitRequest,
+    db: Session = Depends(get_db),
+    _=Depends(get_current_user),
+):
     try:
         return {"data": JobService.submit_slurm_job(db, request_id, payload)}
     except ValueError as exc:
@@ -56,7 +66,7 @@ def submit_slurm_job(request_id: str, payload: SlurmJobSubmitRequest, db: Sessio
 
 
 @router.post("/{job_id}/sync", response_model=JobItemResponse)
-def sync_job(job_id: int, db: Session = Depends(get_db)):
+def sync_job(job_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
     item = JobService.sync(db, job_id)
     if not item:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -64,7 +74,7 @@ def sync_job(job_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/{job_id}/cancel", response_model=JobItemResponse)
-def cancel_job(job_id: int, db: Session = Depends(get_db)):
+def cancel_job(job_id: int, db: Session = Depends(get_db), _=Depends(require_admin)):
     item = JobService.cancel(db, job_id)
     if not item:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -72,7 +82,7 @@ def cancel_job(job_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/{job_id}/advance", response_model=JobAdvanceResponse)
-def advance_job(job_id: int, db: Session = Depends(get_db)):
+def advance_job(job_id: int, db: Session = Depends(get_db), _=Depends(require_admin)):
     item = JobService.advance(db, job_id)
     if not item:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -80,7 +90,7 @@ def advance_job(job_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/monitor/sweep")
-def trigger_monitor_sweep():
+def trigger_monitor_sweep(_=Depends(require_admin)):
     if get_settings().job_queue_enabled:
         return {"data": {"message": "job monitor sweep queued", "queue_job_id": enqueue_job_monitor_sweep()}}
     result = monitor_all_jobs()

@@ -22,7 +22,12 @@ def list_leaderboard(
 
 
 @router.post("/push/{request_id}", response_model=LeaderboardPushResponse)
-def push_to_leaderboard(request_id: str, payload: LeaderboardPushRequest | None = None, db: Session = Depends(get_db)):
+def push_to_leaderboard(
+    request_id: str,
+    payload: LeaderboardPushRequest | None = None,
+    db: Session = Depends(get_db),
+    _=Depends(require_admin),
+):
     try:
         consented = payload.consented if payload else True
         return {"data": LeaderboardService.push_request(db, request_id, consented=consented)}

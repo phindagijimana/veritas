@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 
+from app.models.api_token import ApiToken
 from app.models.dataset import Dataset
 from app.models.hpc_connection import HPCConnection
 from app.models.job import Job
@@ -9,8 +10,10 @@ from app.models.pipeline import Pipeline
 from app.models.report import Report
 from app.models.report_artifact import ReportArtifact
 from app.models.request import EvaluationRequest
+from app.models.user import User
 
 __all__ = [
+    "ApiToken",
     "Dataset",
     "HPCConnection",
     "Job",
@@ -19,4 +22,5 @@ __all__ = [
     "Report",
     "ReportArtifact",
     "EvaluationRequest",
+    "User",
 ]

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from app.core.security import require_admin
 from app.schemas.atlas_phase_c import PrepareStagingRequest
 from app.services.atlas_phase_c_service import AtlasPhaseCService
 
@@ -10,7 +11,7 @@ service = AtlasPhaseCService()
 
 
 @router.post("/prepare")
-def prepare_staging(payload: PrepareStagingRequest):
+def prepare_staging(payload: PrepareStagingRequest, _=Depends(require_admin)):
     bundle = service.prepare_and_stage(
         request_id=payload.request_id,
         atlas_dataset_id=payload.atlas_dataset_id or "atlas-dataset-unknown",
