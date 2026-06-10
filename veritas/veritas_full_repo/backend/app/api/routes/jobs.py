@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -7,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.db.session import get_db
 from app.core.security import get_current_user, require_admin
+from app.models.job import Job
 from app.schemas.hpc import SlurmJobSubmitRequest
 from app.schemas.job import JobAdvanceResponse, JobItemResponse, JobListResponse, JobPreviewResponse
 from app.services.job_service import JobService
@@ -14,6 +16,9 @@ from app.workers.job_worker import monitor_all_jobs
 from app.workers.tasks import enqueue_job_monitor_sweep
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
+
+# Cap the bytes a single /logs response returns so a runaway log can't OOM the API.
+_LOGS_MAX_BYTES = 256 * 1024  # 256 KB tail
 
 
 @router.get("", response_model=JobListResponse)
@@ -87,6 +92,75 @@ def advance_job(job_id: int, db: Session = Depends(get_db), _=Depends(require_ad
     if not item:
         raise HTTPException(status_code=404, detail="Job not found")
     return {"data": item}
+
+
+@router.get("/{job_id}/logs")
+def get_job_logs(
+    job_id: int,
+    stream: str = Query("stdout", pattern="^(stdout|stderr)$"),
+    db: Session = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    """Return the last ~256 KB of stdout or stderr for a job, as plain text.
+
+    Useful for the UI's "view logs" panel when debugging a failed Slurm job.
+    The HPC stores logs on the cluster filesystem; in mock mode they're
+    locally readable, and in slurm mode they're readable once the cluster
+    has rsynced them back via the artifact-fetch step.
+    """
+    row = db.query(Job).filter(Job.id == job_id).one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    path_str = row.stdout_path if stream == "stdout" else row.stderr_path
+    if not path_str:
+        return {
+            "data": {
+                "job_id": job_id,
+                "stream": stream,
+                "available": False,
+                "path": None,
+                "truncated": False,
+                "content": "",
+                "message": f"No {stream} path recorded for this job yet.",
+            }
+        }
+    p = Path(path_str)
+    if not p.exists() or not p.is_file():
+        return {
+            "data": {
+                "job_id": job_id,
+                "stream": stream,
+                "available": False,
+                "path": str(p),
+                "truncated": False,
+                "content": "",
+                "message": (
+                    f"{stream} file at {p} is not readable from the API host. "
+                    "On a real cluster, logs are fetched after the job finishes."
+                ),
+            }
+        }
+    size = p.stat().st_size
+    truncated = size > _LOGS_MAX_BYTES
+    with p.open("rb") as fh:
+        if truncated:
+            fh.seek(-_LOGS_MAX_BYTES, 2)
+        data = fh.read()
+    try:
+        content = data.decode("utf-8", errors="replace")
+    except Exception:
+        content = repr(data)
+    return {
+        "data": {
+            "job_id": job_id,
+            "stream": stream,
+            "available": True,
+            "path": str(p),
+            "size": size,
+            "truncated": truncated,
+            "content": content,
+        }
+    }
 
 
 @router.post("/monitor/sweep")
