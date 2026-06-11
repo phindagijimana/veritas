@@ -1720,8 +1720,8 @@ reports:
           <Card className="mb-5 p-5 sm:p-6">
             <h3 className="text-lg font-semibold" style={{ color: COLORS.text }}>Create a new token</h3>
             <form className="mt-4 grid gap-3 sm:grid-cols-3" onSubmit={submitToken}>
-              <TextField label="Label" placeholder="e.g. ci-laptop, github-actions" value={tokenForm.label} onChange={(v) => setTokenForm({ ...tokenForm, label: v })} />
-              <TextField label="Expires in days (optional)" placeholder="30" value={tokenForm.expiresInDays} onChange={(v) => setTokenForm({ ...tokenForm, expiresInDays: v.replace(/[^0-9]/g, "") })} />
+              <TextField label="Label" placeholder="e.g. ci-laptop, github-actions" value={tokenForm.label} onChange={(e) => setTokenForm({ ...tokenForm, label: e.target.value })} />
+              <TextField label="Expires in days (optional)" placeholder="30" value={tokenForm.expiresInDays} onChange={(e) => setTokenForm({ ...tokenForm, expiresInDays: e.target.value.replace(/[^0-9]/g, "") })} />
               <div className="flex items-end">
                 <button type="submit" disabled={tokenSubmit.loading} className="w-full rounded-full px-5 py-3 font-medium text-white" style={{ backgroundColor: COLORS.navy, opacity: tokenSubmit.loading ? 0.6 : 1 }}>
                   {tokenSubmit.loading ? "Creating…" : "Create token"}
