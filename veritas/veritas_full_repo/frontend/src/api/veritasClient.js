@@ -158,6 +158,53 @@ export async function revokeApiToken(id, timeoutMs = 10000) {
   return apiFetch(`/auth/tokens/${encodeURIComponent(String(id))}`, { method: "DELETE", timeoutMs });
 }
 
+/* ───────────── admin: users + audit ───────────── */
+
+/**
+ * GET /api/v1/admin/users — admin-only. Returns rows of {email, role, is_active, full_name}.
+ */
+export async function fetchAdminUsers(timeoutMs = 15000) {
+  const r = await apiFetch("/admin/users", { timeoutMs });
+  if (!r.ok) return r;
+  return { ok: true, data: Array.isArray(r.data) ? r.data : [] };
+}
+
+/**
+ * PATCH /api/v1/admin/users/{email}/role — change role to admin|researcher.
+ */
+export async function setUserRole(email, role, timeoutMs = 15000) {
+  return apiFetch(`/admin/users/${encodeURIComponent(email)}/role`, {
+    method: "PATCH",
+    body: { role },
+    timeoutMs,
+  });
+}
+
+/**
+ * POST /api/v1/admin/users/{email}/reset-password — returns { data: { email, password } }
+ * where password is plaintext shown ONCE; clients must deliver it out-of-band.
+ */
+export async function resetUserPassword(email, timeoutMs = 30000) {
+  return apiFetch(`/admin/users/${encodeURIComponent(email)}/reset-password`, {
+    method: "POST",
+    timeoutMs,
+  });
+}
+
+/**
+ * GET /api/v1/admin/audit?limit=&action=&actor_email=&subject_id=
+ */
+export async function fetchAuditEvents({ limit = 100, action, actorEmail, subjectId } = {}, timeoutMs = 15000) {
+  const params = new URLSearchParams();
+  if (limit) params.set("limit", String(limit));
+  if (action) params.set("action", action);
+  if (actorEmail) params.set("actor_email", actorEmail);
+  if (subjectId) params.set("subject_id", subjectId);
+  const r = await apiFetch(`/admin/audit?${params.toString()}`, { timeoutMs });
+  if (!r.ok) return r;
+  return { ok: true, data: Array.isArray(r.data) ? r.data : [] };
+}
+
 /* ───────────── pipelines ───────────── */
 
 export async function fetchPipelines(timeoutMs = 15000) {

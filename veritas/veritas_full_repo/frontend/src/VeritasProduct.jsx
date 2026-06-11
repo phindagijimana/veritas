@@ -5,14 +5,18 @@ import {
   createApiToken,
   createEvaluationRequest,
   downloadReportFile,
+  fetchAdminUsers,
   fetchApiTokens,
+  fetchAuditEvents,
   fetchEvaluationRequests,
   fetchHpcSummary,
   fetchJobLogs,
   fetchLeaderboard,
   fetchPipelines,
   previewSlurmJob,
+  resetUserPassword,
   revokeApiToken,
+  setUserRole,
   submitSlurmJob,
   testHpcConnection,
 } from "./api/veritasClient.js";
@@ -452,6 +456,10 @@ export default function VeritasApp({ currentUser = null, onLogout = null } = {})
   const [tokenForm, setTokenForm] = useState({ label: "", expiresInDays: "" });
   const [tokenSubmit, setTokenSubmit] = useState({ loading: false, error: null });
   const [createdToken, setCreatedToken] = useState(null); // { token, prefix, label }
+  const [adminUsers, setAdminUsers] = useState({ loading: false, error: null, items: null });
+  const [resetReveal, setResetReveal] = useState(null); // { email, password }
+  const [auditEvents, setAuditEvents] = useState({ loading: false, error: null, items: null });
+  const [auditFilter, setAuditFilter] = useState({ action: "", actor_email: "" });
   const [reportDownload, setReportDownload] = useState({ pending: null, error: null });
   const [logsForm, setLogsForm] = useState({ jobId: "", stream: "stdout" });
   const [logsView, setLogsView] = useState({ loading: false, error: null, data: null });
@@ -745,6 +753,57 @@ reports:
       else setTokens((t) => ({ ...t, error: res.message }));
     },
     [reloadTokens],
+  );
+
+  const reloadAdminUsers = useCallback(async () => {
+    setAdminUsers({ loading: true, error: null, items: null });
+    const res = await fetchAdminUsers();
+    if (res.ok) setAdminUsers({ loading: false, error: null, items: res.data });
+    else setAdminUsers({ loading: false, error: res.message, items: null });
+  }, []);
+
+  const reloadAudit = useCallback(async () => {
+    setAuditEvents({ loading: true, error: null, items: null });
+    const res = await fetchAuditEvents({
+      limit: 50,
+      action: auditFilter.action.trim() || undefined,
+      actorEmail: auditFilter.actor_email.trim() || undefined,
+    });
+    if (res.ok) setAuditEvents({ loading: false, error: null, items: res.data });
+    else setAuditEvents({ loading: false, error: res.message, items: null });
+  }, [auditFilter]);
+
+  useEffect(() => {
+    if (page !== "admin" || !isVeritasApiConfigured()) return;
+    reloadAdminUsers();
+    reloadAudit();
+  }, [page, reloadAdminUsers, reloadAudit]);
+
+  const handleResetPassword = useCallback(
+    async (email) => {
+      const res = await resetUserPassword(email);
+      if (res.ok) {
+        setResetReveal({ email: res.data?.email || email, password: res.data?.password });
+        reloadAudit();
+      } else {
+        setAdminUsers((u) => ({ ...u, error: res.message }));
+      }
+    },
+    [reloadAudit],
+  );
+
+  const handleToggleRole = useCallback(
+    async (email, currentRole) => {
+      const next = currentRole === "admin" ? "researcher" : "admin";
+      const res = await setUserRole(email, next);
+      if (res.ok) {
+        reloadAdminUsers();
+        reloadAudit();
+      } else {
+        setAdminUsers((u) => ({ ...u, error: res.message }));
+      }
+    },
+    [reloadAdminUsers, reloadAudit],
   );
 
   const navButton = (item, mobile = false) => {
@@ -1709,6 +1768,131 @@ reports:
                 </div>
               )}
             </Card>
+
+            {/* Users panel (admin-only; surfaced only when /admin/users responds 200). */}
+            {adminUsers.error && !adminUsers.error.toLowerCase().includes("admin") && (
+              <Card className="mt-5 p-5 text-sm" style={{ color: "#991b1b", backgroundColor: "#fef2f2" }}>
+                Could not load users: {adminUsers.error}
+              </Card>
+            )}
+            {Array.isArray(adminUsers.items) && (
+              <Card className="mt-5 overflow-hidden">
+                <div className="flex items-center justify-between border-b px-5 py-4 sm:px-6" style={{ borderColor: COLORS.line }}>
+                  <div>
+                    <h3 className="text-lg font-semibold" style={{ color: COLORS.text }}>Users</h3>
+                    <p className="text-xs" style={{ color: COLORS.muted }}>Promote, demote, and reset passwords. Resets reveal the new password once — deliver it out-of-band.</p>
+                  </div>
+                  <button type="button" onClick={reloadAdminUsers} className="text-xs font-medium underline" style={{ color: COLORS.muted }}>Refresh</button>
+                </div>
+
+                {resetReveal && (
+                  <div className="border-b p-5 sm:p-6" style={{ borderColor: COLORS.line, backgroundColor: "#fffbeb" }}>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <div className="flex-1 min-w-[16rem]">
+                        <div className="text-sm font-semibold" style={{ color: "#92400e" }}>New password for {resetReveal.email}</div>
+                        <div className="text-xs" style={{ color: "#92400e" }}>Shown once — copy now, then send via your usual secure channel.</div>
+                      </div>
+                      <code className="flex-1 min-w-[16rem] break-all rounded-lg border px-3 py-2 font-mono text-sm" style={{ borderColor: COLORS.line, backgroundColor: "#ffffff", color: COLORS.text }}>{resetReveal.password}</code>
+                      <button
+                        type="button"
+                        onClick={() => { if (typeof navigator !== "undefined" && navigator.clipboard) navigator.clipboard.writeText(resetReveal.password); }}
+                        className="rounded-full border px-4 py-2 text-sm font-medium"
+                        style={{ borderColor: COLORS.line, color: COLORS.navy }}
+                      >
+                        Copy
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setResetReveal(null)}
+                        className="rounded-full border px-4 py-2 text-sm font-medium"
+                        style={{ borderColor: COLORS.line, color: COLORS.muted }}
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {adminUsers.loading && <div className="p-5 text-sm" style={{ color: COLORS.muted }}>Loading…</div>}
+                {!adminUsers.loading && adminUsers.items.length === 0 && (
+                  <div className="p-5 text-sm" style={{ color: COLORS.muted }}>No users yet.</div>
+                )}
+                {!adminUsers.loading && adminUsers.items.length > 0 && (
+                  <div className="overflow-x-auto">
+                    <table className="min-w-[720px] w-full text-left text-sm">
+                      <thead style={{ backgroundColor: COLORS.navySoft, color: COLORS.text }}>
+                        <tr>{["Email", "Full name", "Role", "Active", ""].map((h) => <th key={h} className="px-4 py-3 font-medium">{h}</th>)}</tr>
+                      </thead>
+                      <tbody>
+                        {adminUsers.items.map((u, idx) => (
+                          <tr key={u.email} className={idx !== adminUsers.items.length - 1 ? "border-t" : ""} style={{ borderColor: COLORS.line }}>
+                            <td className="px-4 py-3" style={{ color: COLORS.text }}>{u.email}</td>
+                            <td className="px-4 py-3" style={{ color: COLORS.muted }}>{u.full_name || ""}</td>
+                            <td className="px-4 py-3">
+                              <span className="rounded-full border px-3 py-1 text-xs font-medium" style={{ borderColor: COLORS.line, color: u.role === "admin" ? COLORS.navy : COLORS.muted }}>{u.role}</span>
+                            </td>
+                            <td className="px-4 py-3" style={{ color: u.is_active ? "#166534" : "#991b1b" }}>{u.is_active ? "Yes" : "No"}</td>
+                            <td className="px-4 py-3 space-x-3">
+                              <button type="button" onClick={() => handleToggleRole(u.email, u.role)} className="text-xs font-medium underline" style={{ color: COLORS.navy }}>
+                                {u.role === "admin" ? "Demote to researcher" : "Promote to admin"}
+                              </button>
+                              <button type="button" onClick={() => handleResetPassword(u.email)} className="text-xs font-medium underline" style={{ color: "#9a3412" }}>Reset password</button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </Card>
+            )}
+
+            {/* Audit log panel */}
+            {Array.isArray(auditEvents.items) && (
+              <Card className="mt-5 overflow-hidden">
+                <div className="flex items-center justify-between border-b px-5 py-4 sm:px-6" style={{ borderColor: COLORS.line }}>
+                  <div>
+                    <h3 className="text-lg font-semibold" style={{ color: COLORS.text }}>Audit log</h3>
+                    <p className="text-xs" style={{ color: COLORS.muted }}>Append-only record of state-changing API writes. Most recent first.</p>
+                  </div>
+                  <button type="button" onClick={reloadAudit} className="text-xs font-medium underline" style={{ color: COLORS.muted }}>Refresh</button>
+                </div>
+                <div className="grid gap-3 border-b p-4 sm:grid-cols-3 sm:px-6" style={{ borderColor: COLORS.line }}>
+                  <TextField label="Filter by action" placeholder="job.advance, report.generate, …" value={auditFilter.action} onChange={(e) => setAuditFilter({ ...auditFilter, action: e.target.value })} />
+                  <TextField label="Filter by actor email" placeholder="admin@veritas.local" value={auditFilter.actor_email} onChange={(e) => setAuditFilter({ ...auditFilter, actor_email: e.target.value })} />
+                  <div className="flex items-end">
+                    <button type="button" onClick={reloadAudit} className="w-full rounded-full px-4 py-2 text-sm font-medium text-white" style={{ backgroundColor: COLORS.navy }}>Apply filter</button>
+                  </div>
+                </div>
+                {auditEvents.loading && <div className="p-5 text-sm" style={{ color: COLORS.muted }}>Loading…</div>}
+                {!auditEvents.loading && auditEvents.error && (
+                  <div className="p-5 text-sm" style={{ color: "#991b1b", backgroundColor: "#fef2f2" }}>{auditEvents.error}</div>
+                )}
+                {!auditEvents.loading && !auditEvents.error && auditEvents.items.length === 0 && (
+                  <div className="p-5 text-sm" style={{ color: COLORS.muted }}>No audit events match your filter yet.</div>
+                )}
+                {!auditEvents.loading && !auditEvents.error && auditEvents.items.length > 0 && (
+                  <div className="overflow-x-auto">
+                    <table className="min-w-[820px] w-full text-left text-sm">
+                      <thead style={{ backgroundColor: COLORS.navySoft, color: COLORS.text }}>
+                        <tr>{["When", "Actor", "Action", "Subject", "Status"].map((h) => <th key={h} className="px-4 py-3 font-medium">{h}</th>)}</tr>
+                      </thead>
+                      <tbody>
+                        {auditEvents.items.map((e, idx) => (
+                          <tr key={e.id} className={idx !== auditEvents.items.length - 1 ? "border-t" : ""} style={{ borderColor: COLORS.line }}>
+                            <td className="px-4 py-3" style={{ color: COLORS.muted }}>{e.created_at ? e.created_at.slice(0, 19).replace("T", " ") : ""}</td>
+                            <td className="px-4 py-3" style={{ color: COLORS.text }}>{e.actor_email || "(anonymous)"}</td>
+                            <td className="px-4 py-3 font-mono text-xs" style={{ color: COLORS.text }}>{e.action}</td>
+                            <td className="px-4 py-3" style={{ color: COLORS.muted }}>{e.subject_type || e.subject_id ? `${e.subject_type || ""}:${e.subject_id || ""}` : ""}</td>
+                            <td className="px-4 py-3" style={{ color: e.http_status && e.http_status >= 400 ? "#991b1b" : COLORS.muted }}>{e.http_status ?? ""}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </Card>
+            )}
           </div>
         </PageShell>
       )}
