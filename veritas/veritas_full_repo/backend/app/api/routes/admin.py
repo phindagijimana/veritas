@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import csv
+import io
+import json
 import secrets
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -185,3 +188,68 @@ def admin_list_audit_events(
             for r in rows
         ]
     }
+
+
+_AUDIT_EXPORT_FIELDS = [
+    "id", "created_at", "actor_email", "actor_role", "auth_method",
+    "action", "subject_type", "subject_id", "http_status", "route", "ip",
+]
+
+
+@router.get("/audit/export")
+def admin_export_audit_events(
+    format: str = Query("csv", pattern="^(csv|json)$"),
+    limit: int = Query(5000, ge=1, le=50000),
+    action: Optional[str] = None,
+    actor_email: Optional[str] = None,
+    subject_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+    _=Depends(require_admin),
+):
+    """Stream the audit log as CSV or JSON for compliance/IR exports.
+
+    Same filters as the list endpoint; capped at 50000 rows per request so a
+    single export can't blow out memory on the API host.
+    """
+    q = db.query(AuditEvent)
+    if action:
+        q = q.filter(AuditEvent.action == action.strip())
+    if actor_email:
+        q = q.filter(AuditEvent.actor_email == actor_email.strip().lower())
+    if subject_id:
+        q = q.filter(AuditEvent.subject_id == subject_id.strip())
+    rows = q.order_by(AuditEvent.created_at.desc(), AuditEvent.id.desc()).limit(limit).all()
+
+    def row_dict(r):
+        return {
+            "id": r.id,
+            "created_at": r.created_at.isoformat() if r.created_at else "",
+            "actor_email": r.actor_email or "",
+            "actor_role": r.actor_role or "",
+            "auth_method": r.auth_method or "",
+            "action": r.action,
+            "subject_type": r.subject_type or "",
+            "subject_id": r.subject_id or "",
+            "http_status": r.http_status if r.http_status is not None else "",
+            "route": r.route or "",
+            "ip": r.ip or "",
+        }
+
+    if format == "json":
+        body = json.dumps([row_dict(r) for r in rows], indent=2)
+        return Response(
+            content=body,
+            media_type="application/json",
+            headers={"Content-Disposition": 'attachment; filename="veritas-audit.json"'},
+        )
+
+    buf = io.StringIO()
+    w = csv.DictWriter(buf, fieldnames=_AUDIT_EXPORT_FIELDS)
+    w.writeheader()
+    for r in rows:
+        w.writerow(row_dict(r))
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="veritas-audit.csv"'},
+    )

@@ -20,13 +20,22 @@ const PAGE_BY_PATH = Object.fromEntries(Object.entries(PATH_BY_PAGE).map(([k, v]
 function pageFromPath(pathname) {
   // Trim a trailing slash and look up. Unknown paths fall back to home.
   const cleaned = pathname.replace(/\/+$/, "") || "/";
+  // /leaderboard/:id is a deep link into the leaderboard view (id highlights below).
+  if (cleaned.startsWith("/leaderboard/")) return "leaderboard";
   return PAGE_BY_PATH[cleaned] || "home";
+}
+
+/** Extract the deep-linked leaderboard entry id from /leaderboard/:id, else null. */
+function leaderboardIdFromPath(pathname) {
+  const m = pathname.match(/^\/leaderboard\/([^/]+)/);
+  return m ? decodeURIComponent(m[1]) : null;
 }
 
 import {
   connectHpc,
   createApiToken,
   createEvaluationRequest,
+  downloadAuditExport,
   downloadReportFile,
   fetchAdminUsers,
   fetchApiTokens,
@@ -453,6 +462,7 @@ export default function VeritasApp({ currentUser = null, onLogout = null } = {})
   const location = useLocation();
   const navigate = useNavigate();
   const page = pageFromPath(location.pathname);
+  const leaderboardHighlightId = leaderboardIdFromPath(location.pathname);
   const setPage = useCallback(
     (p) => navigate(PATH_BY_PAGE[p] || "/"),
     [navigate],
@@ -946,6 +956,17 @@ reports:
                       {notifications.unread > 9 ? "9+" : notifications.unread}
                     </span>
                   )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPage("help")}
+                  aria-label="Help"
+                  data-testid="help-link"
+                  title="Help & getting started"
+                  className="rounded-full border px-2 py-1 text-xs font-medium text-white transition hover:bg-white/10"
+                  style={{ borderColor: "rgba(255,255,255,0.25)", background: "rgba(255,255,255,0.05)" }}
+                >
+                  ?
                 </button>
                 <button
                   type="button"
@@ -1533,19 +1554,47 @@ reports:
                   <div className="overflow-x-auto">
                     <table className="min-w-[720px] w-full text-left text-sm">
                       <thead style={{ backgroundColor: COLORS.navySoft, color: COLORS.text }}>
-                        <tr>{["Rank", "Pipeline", "Dataset", "Primary Score", "Metric", "Published"].map((heading) => <th key={heading} className="px-4 py-3 font-medium">{heading}</th>)}</tr>
+                        <tr>{["Rank", "Pipeline", "Dataset", "Primary Score", "Metric", "Published", ""].map((heading) => <th key={heading} className="px-4 py-3 font-medium">{heading}</th>)}</tr>
                       </thead>
                       <tbody>
-                        {rows.map((entry, idx) => (
-                          <tr key={entry.id ?? `${group}-${idx}`} className={idx !== rows.length - 1 ? "border-t" : ""} style={{ borderColor: COLORS.line }}>
-                            <td className="px-4 py-4" style={{ color: COLORS.text }}>#{entry.rank ?? entry.overall_rank ?? idx + 1}</td>
-                            <td className="px-4 py-4" style={{ color: COLORS.text }}>{entry.pipeline}</td>
-                            <td className="px-4 py-4" style={{ color: COLORS.muted }}>{entry.dataset}</td>
-                            <td className="px-4 py-4"><span className="rounded-full border px-3 py-1 text-xs" style={{ borderColor: COLORS.line, backgroundColor: COLORS.soft, color: COLORS.navy }}>{typeof entry.score === "number" ? entry.score.toFixed(2) : entry.score}</span></td>
-                            <td className="px-4 py-4" style={{ color: COLORS.muted }}>{entry.metric_label || entry.metric}</td>
-                            <td className="px-4 py-4" style={{ color: COLORS.muted }}>{entry.published_at ? new Date(entry.published_at).toISOString().slice(0, 10) : ""}</td>
-                          </tr>
-                        ))}
+                        {rows.map((entry, idx) => {
+                          const isHighlighted = leaderboardHighlightId && String(entry.id) === String(leaderboardHighlightId);
+                          const shareUrl = (typeof window !== "undefined" ? window.location.origin : "") + `/leaderboard/${entry.id}`;
+                          return (
+                            <tr
+                              key={entry.id ?? `${group}-${idx}`}
+                              id={`leaderboard-${entry.id}`}
+                              ref={isHighlighted ? (el) => { if (el) el.scrollIntoView({ behavior: "smooth", block: "center" }); } : null}
+                              className={idx !== rows.length - 1 ? "border-t" : ""}
+                              style={{
+                                borderColor: COLORS.line,
+                                backgroundColor: isHighlighted ? "#fffbeb" : undefined,
+                                boxShadow: isHighlighted ? "inset 0 0 0 2px #fbbf24" : undefined,
+                              }}
+                            >
+                              <td className="px-4 py-4" style={{ color: COLORS.text }}>#{entry.rank ?? entry.overall_rank ?? idx + 1}</td>
+                              <td className="px-4 py-4" style={{ color: COLORS.text }}>{entry.pipeline}</td>
+                              <td className="px-4 py-4" style={{ color: COLORS.muted }}>{entry.dataset}</td>
+                              <td className="px-4 py-4"><span className="rounded-full border px-3 py-1 text-xs" style={{ borderColor: COLORS.line, backgroundColor: COLORS.soft, color: COLORS.navy }}>{typeof entry.score === "number" ? entry.score.toFixed(2) : entry.score}</span></td>
+                              <td className="px-4 py-4" style={{ color: COLORS.muted }}>{entry.metric_label || entry.metric}</td>
+                              <td className="px-4 py-4" style={{ color: COLORS.muted }}>{entry.published_at ? new Date(entry.published_at).toISOString().slice(0, 10) : ""}</td>
+                              <td className="px-4 py-4">
+                                <button
+                                  type="button"
+                                  aria-label={`Share link to leaderboard entry ${entry.id}`}
+                                  onClick={() => {
+                                    if (typeof navigator !== "undefined" && navigator.clipboard) navigator.clipboard.writeText(shareUrl);
+                                    navigate(`/leaderboard/${entry.id}`);
+                                  }}
+                                  className="text-xs font-medium underline"
+                                  style={{ color: COLORS.navy }}
+                                >
+                                  Share
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -1979,7 +2028,27 @@ reports:
                     <h3 className="text-lg font-semibold" style={{ color: COLORS.text }}>Audit log</h3>
                     <p className="text-xs" style={{ color: COLORS.muted }}>Append-only record of state-changing API writes. Most recent first.</p>
                   </div>
-                  <button type="button" onClick={reloadAudit} className="text-xs font-medium underline" style={{ color: COLORS.muted }}>Refresh</button>
+                  <div className="flex items-center gap-3 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => downloadAuditExport("csv", { action: auditFilter.action.trim() || undefined, actorEmail: auditFilter.actor_email.trim() || undefined })}
+                      className="rounded-full border px-3 py-1 font-medium"
+                      style={{ borderColor: COLORS.line, color: COLORS.navy }}
+                      data-testid="audit-export-csv"
+                    >
+                      Export CSV
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => downloadAuditExport("json", { action: auditFilter.action.trim() || undefined, actorEmail: auditFilter.actor_email.trim() || undefined })}
+                      className="rounded-full border px-3 py-1 font-medium"
+                      style={{ borderColor: COLORS.line, color: COLORS.navy }}
+                      data-testid="audit-export-json"
+                    >
+                      Export JSON
+                    </button>
+                    <button type="button" onClick={reloadAudit} className="font-medium underline" style={{ color: COLORS.muted }}>Refresh</button>
+                  </div>
                 </div>
                 <div className="grid gap-3 border-b p-4 sm:grid-cols-3 sm:px-6" style={{ borderColor: COLORS.line }}>
                   <TextField label="Filter by action" placeholder="job.advance, report.generate, …" value={auditFilter.action} onChange={(e) => setAuditFilter({ ...auditFilter, action: e.target.value })} />

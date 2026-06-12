@@ -144,3 +144,59 @@ def test_researcher_cannot_reset_passwords(auth_on, client):
         headers={"Authorization": f"Bearer {_jwt(role='researcher')}"},
     )
     assert r.status_code == 403, r.text
+
+
+def test_audit_export_csv(auth_on, client):
+    """Verify the audit export endpoint returns a real CSV with the expected headers."""
+    # Trigger at least one auditable event so there's something to export.
+    admin = {"Authorization": f"Bearer {_jwt(email='audit-csv-admin@veritas.local')}"}
+    _seed_user(client, "audit-csv-target@veritas.local")
+    client.post(
+        "/api/v1/admin/users/audit-csv-target@veritas.local/reset-password",
+        headers=admin,
+    )
+
+    r = client.get("/api/v1/admin/audit/export?format=csv", headers=admin)
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"].startswith("text/csv"), r.headers
+    assert "attachment" in r.headers["content-disposition"]
+    body = r.text
+    first_line = body.splitlines()[0]
+    for col in ("id", "created_at", "actor_email", "action", "subject_id", "http_status"):
+        assert col in first_line, f"CSV header missing column: {col}"
+    assert "admin.user.reset_password" in body
+
+
+def test_audit_export_json(auth_on, client):
+    admin = {"Authorization": f"Bearer {_jwt(email='audit-json-admin@veritas.local')}"}
+    _seed_user(client, "audit-json-target@veritas.local")
+    client.post(
+        "/api/v1/admin/users/audit-json-target@veritas.local/reset-password",
+        headers=admin,
+    )
+
+    r = client.get("/api/v1/admin/audit/export?format=json", headers=admin)
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"].startswith("application/json"), r.headers
+    assert "attachment" in r.headers["content-disposition"]
+    import json as _json
+    rows = _json.loads(r.text)
+    assert isinstance(rows, list) and len(rows) >= 1
+    assert any(row["action"] == "admin.user.reset_password" for row in rows)
+
+
+def test_audit_export_researcher_forbidden(auth_on, client):
+    r = client.get(
+        "/api/v1/admin/audit/export?format=csv",
+        headers={"Authorization": f"Bearer {_jwt(role='researcher')}"},
+    )
+    assert r.status_code == 403, r.text
+
+
+def test_audit_export_rejects_unknown_format(auth_on, client):
+    r = client.get(
+        "/api/v1/admin/audit/export?format=xml",
+        headers={"Authorization": f"Bearer {_jwt(email='admin-fmt@veritas.local')}"},
+    )
+    # FastAPI's regex param validation returns 422 for the bad pattern.
+    assert r.status_code == 422, r.text

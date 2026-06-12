@@ -212,6 +212,49 @@ export async function markAllNotificationsRead(timeoutMs = 10000) {
 }
 
 /**
+ * GET /api/v1/admin/audit/export — triggers a browser download of the filtered
+ * audit log as CSV or JSON. Uses fetch + Blob so the bearer header is honored
+ * (a plain <a download> can't attach Authorization).
+ */
+export async function downloadAuditExport(
+  format = "csv",
+  { action, actorEmail, subjectId, limit = 5000 } = {},
+) {
+  if (!isVeritasApiConfigured()) {
+    return { ok: false, message: "Set VITE_VERITAS_API_BASE_URL." };
+  }
+  const params = new URLSearchParams();
+  params.set("format", format);
+  if (limit) params.set("limit", String(limit));
+  if (action) params.set("action", action);
+  if (actorEmail) params.set("actor_email", actorEmail);
+  if (subjectId) params.set("subject_id", subjectId);
+  try {
+    const r = await fetch(`${VERITAS_API_BASE_URL}/admin/audit/export?${params.toString()}`, {
+      method: "GET",
+      credentials: "omit",
+      headers: authHeaders(),
+    });
+    if (!r.ok) {
+      const text = await r.text();
+      return { ok: false, status: r.status, message: text || `HTTP ${r.status}` };
+    }
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `veritas-audit.${format}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, message: e?.message || "Network error" };
+  }
+}
+
+/**
  * GET /api/v1/admin/audit?limit=&action=&actor_email=&subject_id=
  */
 export async function fetchAuditEvents({ limit = 100, action, actorEmail, subjectId } = {}, timeoutMs = 15000) {
