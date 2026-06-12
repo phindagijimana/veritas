@@ -191,6 +191,26 @@ export async function resetUserPassword(email, timeoutMs = 30000) {
   });
 }
 
+/* ───────────── notifications ───────────── */
+
+/**
+ * GET /api/v1/notifications?unread_only=&limit=
+ */
+export async function fetchNotifications({ unreadOnly = false, limit = 50 } = {}, timeoutMs = 15000) {
+  const params = new URLSearchParams();
+  if (unreadOnly) params.set("unread_only", "true");
+  if (limit) params.set("limit", String(limit));
+  return apiFetch(`/notifications?${params.toString()}`, { timeoutMs });
+}
+
+export async function markNotificationRead(id, timeoutMs = 10000) {
+  return apiFetch(`/notifications/${encodeURIComponent(String(id))}/read`, { method: "POST", timeoutMs });
+}
+
+export async function markAllNotificationsRead(timeoutMs = 10000) {
+  return apiFetch("/notifications/read-all", { method: "POST", timeoutMs });
+}
+
 /**
  * GET /api/v1/admin/audit?limit=&action=&actor_email=&subject_id=
  */

@@ -68,7 +68,11 @@ class RequestService:
         return [RequestService._to_read(item) for item in items]
 
     @staticmethod
-    def create(db: Session, payload: EvaluationRequestCreate) -> EvaluationRequestRead:
+    def create(
+        db: Session,
+        payload: EvaluationRequestCreate,
+        submitted_by: str | None = None,
+    ) -> EvaluationRequestRead:
         pipeline = db.scalar(select(Pipeline).where(Pipeline.image == payload.pipeline).limit(1))
         if not pipeline:
             pipeline = db.scalar(select(Pipeline).where(Pipeline.name == payload.pipeline).limit(1))
@@ -111,6 +115,7 @@ class RequestService:
             dataset_id=dataset.id,
             status=RequestStatus.submitted.value,
             report_status=ReportStatus.pending.value,
+            submitted_by=(submitted_by or "").strip().lower() or None,
         )
         db.add(item)
         db.commit()

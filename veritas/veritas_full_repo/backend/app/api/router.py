@@ -13,6 +13,7 @@ from app.api.routes.health import router as health_router
 from app.api.routes.hpc import router as hpc_router
 from app.api.routes.jobs import router as jobs_router
 from app.api.routes.leaderboard import router as leaderboard_router
+from app.api.routes.notifications import router as notifications_router
 from app.api.routes.pipelines import router as pipelines_router
 from app.api.routes.reports import router as reports_router
 from app.api.routes.requests import router as requests_router
@@ -32,3 +33,4 @@ api_router.include_router(reports_router)
 api_router.include_router(leaderboard_router)
 api_router.include_router(hpc_router)
 api_router.include_router(admin_router)
+api_router.include_router(notifications_router)

@@ -8,7 +8,9 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.core.security import get_current_user, require_admin
+from app.models.request import EvaluationRequest
 from app.schemas.report import DownloadLinkResponse, ReportDetailResponse, ReportItemResponse, ReportListResponse
+from app.services.notification_service import notify
 from app.services.report_service import ReportService
 from app.services.request_service import InvalidPhaseTransitionError, RequestService
 
@@ -40,11 +42,41 @@ def report_detail(request_id: str, db: Session = Depends(get_db)):
 @router.post("/generate/{request_id}", response_model=ReportItemResponse)
 def generate_report(request_id: str, db: Session = Depends(get_db), _=Depends(require_admin)):
     try:
-        return {"data": ReportService.generate_for_request(db, request_id)}
+        result = ReportService.generate_for_request(db, request_id)
     except InvalidPhaseTransitionError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    # Notify the requester that their report is ready (best-effort; never
+    # blocks the report-generation response). RequestService doesn't expose
+    # submitted_by directly on the result schema, so look it up by request_id.
+    try:
+        req_row = (
+            db.query(EvaluationRequest)
+            .filter(
+                (EvaluationRequest.request_code == request_id)
+                | (EvaluationRequest.id == (int(request_id) if str(request_id).isdigit() else -1))
+            )
+            .one_or_none()
+        )
+        submitted_by = getattr(req_row, "submitted_by", None) if req_row else None
+        code = getattr(req_row, "request_code", request_id) if req_row else request_id
+        if submitted_by:
+            notify(
+                db,
+                user_email=submitted_by,
+                kind="report.ready",
+                title=f"Report ready for {code}",
+                body="Your evaluation report has finished generating.",
+                link_page="user",
+                link_anchor=str(code),
+            )
+    except Exception:
+        # Notification is best-effort; never break report generation on it.
+        db.rollback()
+
+    return {"data": result}
 
 
 @router.post("/publish/{request_id}", response_model=ReportItemResponse)

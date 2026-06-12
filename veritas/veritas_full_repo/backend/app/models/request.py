@@ -22,6 +22,7 @@ class EvaluationRequest(Base):
     dataset_id: Mapped[int] = mapped_column(ForeignKey("datasets.id"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     admin_note: Mapped[Optional[str]] = mapped_column(Text(), nullable=True)
+    submitted_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
 
     pipeline = relationship("Pipeline")
     dataset = relationship("Dataset")

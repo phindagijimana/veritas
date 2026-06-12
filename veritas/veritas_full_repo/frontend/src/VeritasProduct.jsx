@@ -12,7 +12,10 @@ import {
   fetchHpcSummary,
   fetchJobLogs,
   fetchLeaderboard,
+  fetchNotifications,
   fetchPipelines,
+  markAllNotificationsRead,
+  markNotificationRead,
   previewSlurmJob,
   resetUserPassword,
   revokeApiToken,
@@ -460,6 +463,8 @@ export default function VeritasApp({ currentUser = null, onLogout = null } = {})
   const [resetReveal, setResetReveal] = useState(null); // { email, password }
   const [auditEvents, setAuditEvents] = useState({ loading: false, error: null, items: null });
   const [auditFilter, setAuditFilter] = useState({ action: "", actor_email: "" });
+  const [notifications, setNotifications] = useState({ items: [], unread: 0 });
+  const [notifOpen, setNotifOpen] = useState(false);
   const [reportDownload, setReportDownload] = useState({ pending: null, error: null });
   const [logsForm, setLogsForm] = useState({ jobId: "", stream: "stdout" });
   const [logsView, setLogsView] = useState({ loading: false, error: null, data: null });
@@ -806,6 +811,41 @@ reports:
     [reloadAdminUsers, reloadAudit],
   );
 
+  const reloadNotifications = useCallback(async () => {
+    if (!isVeritasApiConfigured()) return;
+    const res = await fetchNotifications({ limit: 20 });
+    if (res.ok) {
+      // apiFetch unwraps the `data` field; the unread_count sibling is lost
+      // in that case. Compute it from items.is_read to be shape-agnostic.
+      const items = Array.isArray(res.data) ? res.data : Array.isArray(res.data?.data) ? res.data.data : [];
+      const unread = items.filter((n) => !n.is_read).length;
+      setNotifications({ items, unread });
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    reloadNotifications();
+    // Poll every 30s while the tab is open; gentle on the API.
+    const t = setInterval(reloadNotifications, 30_000);
+    return () => clearInterval(t);
+  }, [currentUser, reloadNotifications]);
+
+  const onNotificationClick = useCallback(
+    async (notif) => {
+      if (!notif.is_read) await markNotificationRead(notif.id);
+      if (notif.link_page) setPage(notif.link_page);
+      setNotifOpen(false);
+      reloadNotifications();
+    },
+    [reloadNotifications],
+  );
+
+  const onMarkAllRead = useCallback(async () => {
+    await markAllNotificationsRead();
+    reloadNotifications();
+  }, [reloadNotifications]);
+
   const navButton = (item, mobile = false) => {
     const active = page === item.id;
     return (
@@ -854,11 +894,29 @@ reports:
               {NAV_ITEMS.map((item) => navButton(item))}
             </div>
             {currentUser && onLogout && (
-              <div className="hidden items-center gap-2 lg:flex">
+              <div className="relative hidden items-center gap-2 lg:flex">
                 <div className="flex flex-col items-end leading-tight">
                   <span className="text-xs font-semibold text-white truncate max-w-[12rem]">{currentUser.full_name || currentUser.email}</span>
                   <span className="text-[0.65rem] uppercase tracking-wide" style={{ color: "rgba(219,234,254,0.8)" }}>{currentUser.role || "researcher"}</span>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => setNotifOpen((v) => !v)}
+                  aria-label="Notifications"
+                  data-testid="notifications-button"
+                  className="relative rounded-full border px-3 py-1 text-xs font-medium text-white transition hover:bg-white/10"
+                  style={{ borderColor: "rgba(255,255,255,0.25)", background: "rgba(255,255,255,0.05)" }}
+                >
+                  Notifications
+                  {notifications.unread > 0 && (
+                    <span
+                      data-testid="notifications-badge"
+                      className="absolute -top-1 -right-1 inline-flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-red-500 px-1 text-[0.65rem] font-semibold text-white"
+                    >
+                      {notifications.unread > 9 ? "9+" : notifications.unread}
+                    </span>
+                  )}
+                </button>
                 <button
                   type="button"
                   onClick={onLogout}
@@ -869,6 +927,42 @@ reports:
                 >
                   Log out
                 </button>
+
+                {notifOpen && (
+                  <div
+                    data-testid="notifications-panel"
+                    className="absolute right-0 top-full z-50 mt-2 w-96 rounded-2xl border bg-white p-3 shadow-xl"
+                    style={{ borderColor: COLORS.line, color: COLORS.text }}
+                  >
+                    <div className="flex items-center justify-between px-2 pb-2">
+                      <div className="text-sm font-semibold">Notifications</div>
+                      <button type="button" onClick={onMarkAllRead} className="text-xs underline" style={{ color: COLORS.muted }}>Mark all read</button>
+                    </div>
+                    {notifications.items.length === 0 && (
+                      <div className="px-2 py-3 text-xs" style={{ color: COLORS.muted }}>You have no notifications.</div>
+                    )}
+                    {notifications.items.length > 0 && (
+                      <ul className="max-h-80 overflow-y-auto">
+                        {notifications.items.map((n) => (
+                          <li key={n.id}>
+                            <button
+                              type="button"
+                              onClick={() => onNotificationClick(n)}
+                              className="block w-full rounded-lg p-2 text-left hover:bg-slate-50"
+                              style={{ borderLeft: n.is_read ? "3px solid transparent" : `3px solid ${COLORS.navy}` }}
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="text-sm font-medium" style={{ color: COLORS.text }}>{n.title}</div>
+                                <div className="text-[0.65rem]" style={{ color: COLORS.muted }}>{n.created_at ? new Date(n.created_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : ""}</div>
+                              </div>
+                              {n.body && <div className="mt-1 text-xs" style={{ color: COLORS.muted }}>{n.body}</div>}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>

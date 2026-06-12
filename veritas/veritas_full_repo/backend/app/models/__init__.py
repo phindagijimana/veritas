@@ -7,6 +7,7 @@ from app.models.dataset import Dataset
 from app.models.hpc_connection import HPCConnection
 from app.models.job import Job
 from app.models.leaderboard_entry import LeaderboardEntry
+from app.models.notification import Notification
 from app.models.pipeline import Pipeline
 from app.models.report import Report
 from app.models.report_artifact import ReportArtifact
@@ -20,6 +21,7 @@ __all__ = [
     "HPCConnection",
     "Job",
     "LeaderboardEntry",
+    "Notification",
     "Pipeline",
     "Report",
     "ReportArtifact",
