@@ -1,4 +1,27 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
+
+/** Bidirectional map between in-app `page` IDs and URL paths.
+ * Adding deep links later (e.g. /requests/:id) doesn't require touching the
+ * existing page-conditional render blocks — just extend the maps. */
+const PATH_BY_PAGE = {
+  home: "/",
+  user: "/dashboard",
+  pipeline: "/pipeline",
+  leaderboard: "/leaderboard",
+  atlas_api: "/atlas/api",
+  atlas_admin: "/atlas/admin",
+  admin: "/admin",
+  tokens: "/tokens",
+  help: "/help",
+};
+const PAGE_BY_PATH = Object.fromEntries(Object.entries(PATH_BY_PAGE).map(([k, v]) => [v, k]));
+
+function pageFromPath(pathname) {
+  // Trim a trailing slash and look up. Unknown paths fall back to home.
+  const cleaned = pathname.replace(/\/+$/, "") || "/";
+  return PAGE_BY_PATH[cleaned] || "home";
+}
 
 import {
   connectHpc,
@@ -44,6 +67,7 @@ const NAV_ITEMS = [
   { id: "atlas_admin", label: "Atlas admin" },
   { id: "admin", label: "Veritas admin" },
   { id: "tokens", label: "API tokens" },
+  { id: "help", label: "Help" },
 ];
 
 const INITIAL_API_INQUIRIES = [
@@ -426,7 +450,13 @@ function Pill({ label, active = false, complete = false }) {
 }
 
 export default function VeritasApp({ currentUser = null, onLogout = null } = {}) {
-  const [page, setPage] = useState("home");
+  const location = useLocation();
+  const navigate = useNavigate();
+  const page = pageFromPath(location.pathname);
+  const setPage = useCallback(
+    (p) => navigate(PATH_BY_PAGE[p] || "/"),
+    [navigate],
+  );
   const [showHpcModal, setShowHpcModal] = useState(false);
   const [showSlurmModal, setShowSlurmModal] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
@@ -2083,6 +2113,56 @@ reports:
                 </table>
               </div>
             )}
+          </Card>
+        </PageShell>
+      )}
+
+      {page === "help" && (
+        <PageShell>
+          <SectionTitle title="Help & getting started" subtitle="What Veritas is, what to click first, and where to look when something doesn't behave." />
+
+          <Card className="mb-5 p-6">
+            <h3 className="text-lg font-semibold" style={{ color: COLORS.text }}>What is Veritas?</h3>
+            <p className="mt-2 text-sm leading-relaxed" style={{ color: COLORS.muted }}>
+              Veritas validates AI biomarker pipelines on curated clinical datasets. You submit a packaged pipeline (an OCI container image), an admin runs it against a held-out dataset on the HPC cluster, and you get a standardized report with the metrics. Consented results are published on the leaderboard.
+            </p>
+          </Card>
+
+          <Card className="mb-5 p-6">
+            <h3 className="text-lg font-semibold" style={{ color: COLORS.text }}>Start here (researchers)</h3>
+            <ol className="mt-3 space-y-2 text-sm list-decimal pl-5" style={{ color: COLORS.text }}>
+              <li>Open <button type="button" onClick={() => setPage("user")} className="font-semibold underline" style={{ color: COLORS.navy }}>User Dashboard</button> and submit an evaluation request: pick a dataset and paste the container image reference you pushed.</li>
+              <li>Wait for the admin to attach your YAML and submit the Slurm job. You'll see the request move through Pipeline Prep → Data Prep → Processing → Reporting.</li>
+              <li>When the report is ready, the <strong>bell</strong> in the top-right will show a badge. Click it to jump straight to your report.</li>
+              <li>Download the PDF / JSON / CSV report from the request row.</li>
+              <li>Optionally, push your consented run to the <button type="button" onClick={() => setPage("leaderboard")} className="font-semibold underline" style={{ color: COLORS.navy }}>Leaderboard</button>.</li>
+            </ol>
+          </Card>
+
+          <Card className="mb-5 p-6">
+            <h3 className="text-lg font-semibold" style={{ color: COLORS.text }}>For programmatic access</h3>
+            <p className="mt-2 text-sm" style={{ color: COLORS.muted }}>
+              Create a personal access token on the <button type="button" onClick={() => setPage("tokens")} className="font-semibold underline" style={{ color: COLORS.navy }}>API tokens</button> page. The token is shown <em>once</em> at creation. Pass it as <code className="rounded bg-slate-100 px-1">Authorization: Bearer veritas_pat_…</code> on any request. Browse the full API at <a className="font-semibold underline" style={{ color: COLORS.navy }} href="/api/v1/docs" target="_blank" rel="noreferrer">/api/v1/docs</a>.
+            </p>
+          </Card>
+
+          <Card className="mb-5 p-6">
+            <h3 className="text-lg font-semibold" style={{ color: COLORS.text }}>For admins</h3>
+            <ul className="mt-3 space-y-2 text-sm list-disc pl-5" style={{ color: COLORS.text }}>
+              <li><button type="button" onClick={() => setPage("admin")} className="font-semibold underline" style={{ color: COLORS.navy }}>Veritas admin</button> — connect HPC, review requests, attach YAML, preview &amp; submit Slurm jobs, view stdout/stderr, generate reports. The Users and Audit log panels live at the bottom.</li>
+              <li><button type="button" onClick={() => setPage("atlas_admin")} className="font-semibold underline" style={{ color: COLORS.navy }}>Atlas admin</button> — review API access requests from external collaborators.</li>
+              <li>From the shell, <code className="rounded bg-slate-100 px-1">python -m app.cli users create-admin --email …</code> bootstraps the first admin without HTTP.</li>
+            </ul>
+          </Card>
+
+          <Card className="p-6">
+            <h3 className="text-lg font-semibold" style={{ color: COLORS.text }}>If something doesn't work</h3>
+            <ul className="mt-3 space-y-2 text-sm list-disc pl-5" style={{ color: COLORS.text }}>
+              <li><strong>403 on an admin action:</strong> your account is a researcher. Ask an admin to promote you (Veritas admin → Users).</li>
+              <li><strong>"Sign in to Veritas" keeps reappearing:</strong> your JWT expired. Log in again — it lasts 60 min by default.</li>
+              <li><strong>"No notifications yet" but you submitted a job:</strong> the report hasn't generated. Reports trigger the notification when an admin clicks <em>Generate report</em>.</li>
+              <li><strong>Want to revoke a leaked token:</strong> <button type="button" onClick={() => setPage("tokens")} className="font-semibold underline" style={{ color: COLORS.navy }}>API tokens</button> → Revoke.</li>
+            </ul>
           </Card>
         </PageShell>
       )}
