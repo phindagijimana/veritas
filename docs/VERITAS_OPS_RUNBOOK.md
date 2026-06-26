@@ -186,8 +186,63 @@ additive and unused by the new code path (rare).
 | Artifact rsync | nightly 03:00 UTC | systemd timer / cron |
 | Off-site sync | nightly 04:00 UTC | systemd timer / cron |
 | Celery beat (`run_job_monitor_sweep`) | every `JOB_MONITOR_INTERVAL_SECONDS` (default 30 s) | the beat process itself |
-| Audit-log archive (optional) | monthly | `psql … COPY (SELECT … WHERE created_at < now() - interval '90 days') TO 'audit-YYYY-MM.csv' CSV HEADER` then `DELETE` |
+| Audit-log archive + prune | monthly 03:30 UTC on the 1st | `scripts/audit_retention.sh` (see below) |
 | TLS cert renewal | depends on issuer | certbot / ACME client |
+
+### Audit-log retention (cron + systemd)
+
+`audit_events` accumulates one row per state-changing write. For most
+deployments the table grows by ~5-20k rows / day; nine months of that fits
+in a few hundred MB on Postgres. If you want to cap it, the shipped script
+archives + deletes rows older than `--days N` in a single safe pass: it
+writes a gzipped CSV first, verifies the gzip, *then* deletes — so a crash
+mid-script can't lose rows that weren't archived.
+
+```cron
+30 3 1 * * /opt/veritas/scripts/audit_retention.sh \
+  --db-url file:///etc/veritas/db.url \
+  --archive-dir /mnt/veritas-backups/audit \
+  --days 365 \
+  >> /var/log/veritas-audit-retention.log 2>&1
+```
+
+Or via systemd:
+
+```ini
+# /etc/systemd/system/veritas-audit-retention.service
+[Unit]
+Description=Veritas audit_events archive + prune
+
+[Service]
+Type=oneshot
+User=veritas
+EnvironmentFile=/etc/veritas/db.env
+ExecStart=/opt/veritas/scripts/audit_retention.sh \
+  --db-url ${DATABASE_URL} \
+  --archive-dir /mnt/veritas-backups/audit \
+  --days 365
+
+# /etc/systemd/system/veritas-audit-retention.timer
+[Unit]
+Description=Run audit_events retention monthly
+
+[Timer]
+OnCalendar=*-*-01 03:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+The script is idempotent — running it twice in the same hour archives
+zero rows the second time. Each run prints a line you can grep:
+
+```
+found 142318 audit_events older than 365 days; archiving …
+archived: 142318 rows → /mnt/veritas-backups/audit/veritas-audit-archive-2027-06-01T03-30-15Z-365d.csv.gz (8927204 bytes)
+deleted:  142318 rows
+OK
+```
 
 ---
 

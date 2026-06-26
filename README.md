@@ -57,9 +57,11 @@ DATABASE_URL=sqlite:////tmp/veritas_dev.db SEED_DEMO_DATA_ON_STARTUP=true \
 Dev users seeded by `0014_users` when `APP_ENV != production`:
 `dev@veritas.local` (admin), `admin@veritas.local` (admin), `researcher@veritas.local` (researcher) — passwords match the email's local-part (`dev-password`, `admin-password`, `researcher-password`).
 
+**Production first-admin** (fresh DB, `APP_ENV=production`): no users are seeded. Either let an ops user create one via the **UI** — `LoginGate` detects the empty admin table and renders a one-shot "Set up the first admin" form instead of the regular Sign-in screen — or run `python -m app.cli users create-admin --email you@example.org`. Either path produces an admin who can promote everyone else via the in-app **Veritas admin → Users** panel.
+
 **`http://127.0.0.1:7000` is the Veritas web UI** (Vite). Start it with `cd veritas/veritas_full_repo/frontend && npm run dev`. The UI proxies `/api` to the API on **6000** (see `frontend/vite.config.js`).
 
-For PostgreSQL/Redis (production-like), use `veritas/veritas_full_repo/backend/docker-compose.yml`, copy `backend/.env.example` → `.env`, then `./platform migrate && ./platform start`.
+For PostgreSQL/Redis (production-like), use `veritas/veritas_full_repo/backend/docker-compose.yml`, copy `backend/.env.example` → `.env`, then `./platform migrate && ./platform start`. Production deploy guide: [`docs/VERITAS_PRODUCTION.md`](docs/VERITAS_PRODUCTION.md); day-2 ops: [`docs/VERITAS_OPS_RUNBOOK.md`](docs/VERITAS_OPS_RUNBOOK.md).
 
 ### Veritas UI (local dev)
 
