@@ -1,0 +1,197 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Overview dashboard for the Veritas Platform API. Scrapes `/metrics` exposed by the FastAPI process. Companion: `docs/VERITAS_OPS_RUNBOOK.md`.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {"asDropdown": false, "icon": "external link", "includeVars": false, "keepTime": false, "tags": [], "targetBlank": true, "title": "Repo", "tooltip": "Veritas + Atlas source", "type": "link", "url": "https://github.com/your-org/veritas"}
+  ],
+  "panels": [
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]},
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+      "id": 1,
+      "options": {"colorMode": "background", "graphMode": "area", "justifyMode": "auto", "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "pluginVersion": "10.0.0",
+      "targets": [{"expr": "sum(rate(veritas_http_requests_total[1m]))", "legendFormat": "RPS", "refId": "A"}],
+      "title": "Requests / second (1m)",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.5}, {"color": "red", "value": 1.0}]},
+          "unit": "s"
+        }
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+      "id": 2,
+      "options": {"colorMode": "background", "graphMode": "area", "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "pluginVersion": "10.0.0",
+      "targets": [{"expr": "histogram_quantile(0.95, sum by (le) (rate(veritas_http_request_duration_seconds_bucket[5m])))", "legendFormat": "p95", "refId": "A"}],
+      "title": "Latency p95 (5m)",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.01}, {"color": "red", "value": 0.05}]},
+          "unit": "percentunit"
+        }
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+      "id": 3,
+      "options": {"colorMode": "background", "graphMode": "area", "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "pluginVersion": "10.0.0",
+      "targets": [{"expr": "sum(rate(veritas_http_requests_total{status=~\"5..\"}[5m])) / clamp_min(sum(rate(veritas_http_requests_total[5m])), 0.001)", "legendFormat": "5xx rate", "refId": "A"}],
+      "title": "5xx error rate (5m)",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+      "id": 4,
+      "options": {"colorMode": "background", "graphMode": "none", "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "pluginVersion": "10.0.0",
+      "targets": [{"expr": "sum(veritas_active_jobs)", "legendFormat": "jobs", "refId": "A"}],
+      "title": "Active jobs",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+      "id": 5,
+      "options": {"legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "right"}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"expr": "sum by (path) (rate(veritas_http_requests_total[1m]))", "legendFormat": "{{path}}", "refId": "A"}
+      ],
+      "title": "Requests per second by route",
+      "type": "timeseries",
+      "fieldConfig": {"defaults": {"custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 1, "spanNulls": false}, "unit": "reqps"}}
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+      "id": 6,
+      "options": {"legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "right"}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"expr": "histogram_quantile(0.50, sum by (le, path) (rate(veritas_http_request_duration_seconds_bucket[5m])))", "legendFormat": "p50 {{path}}", "refId": "A"},
+        {"expr": "histogram_quantile(0.95, sum by (le, path) (rate(veritas_http_request_duration_seconds_bucket[5m])))", "legendFormat": "p95 {{path}}", "refId": "B"},
+        {"expr": "histogram_quantile(0.99, sum by (le, path) (rate(veritas_http_request_duration_seconds_bucket[5m])))", "legendFormat": "p99 {{path}}", "refId": "C"}
+      ],
+      "title": "Latency p50 / p95 / p99 per route (5m)",
+      "type": "timeseries",
+      "fieldConfig": {"defaults": {"custom": {"drawStyle": "line", "fillOpacity": 0, "lineWidth": 1}, "unit": "s"}}
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 7, "w": 12, "x": 0, "y": 12},
+      "id": 7,
+      "options": {"legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {"expr": "sum by (status) (rate(veritas_http_requests_total[1m]))", "legendFormat": "{{status}}", "refId": "A"}
+      ],
+      "title": "Requests / second by HTTP status",
+      "type": "timeseries",
+      "fieldConfig": {"defaults": {"custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 1, "stacking": {"group": "A", "mode": "normal"}}, "unit": "reqps"}}
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 12},
+      "id": 8,
+      "options": {"legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {"expr": "veritas_active_jobs", "legendFormat": "{{state}}", "refId": "A"}
+      ],
+      "title": "Active jobs by state",
+      "type": "timeseries",
+      "fieldConfig": {"defaults": {"custom": {"drawStyle": "line", "fillOpacity": 20, "lineWidth": 1, "stacking": {"group": "A", "mode": "normal"}}, "unit": "short"}}
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 7, "w": 24, "x": 0, "y": 19},
+      "id": 9,
+      "options": {"legend": {"calcs": ["sum"], "displayMode": "table", "placement": "right"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {"expr": "sum by (path) (rate(veritas_http_requests_total{status=~\"4..|5..\"}[5m]))", "legendFormat": "{{path}}", "refId": "A"}
+      ],
+      "title": "Errors per second by route (4xx + 5xx, 5m)",
+      "type": "timeseries",
+      "fieldConfig": {"defaults": {"custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 1}, "unit": "reqps"}}
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 6, "w": 24, "x": 0, "y": 26},
+      "id": 10,
+      "options": {"legend": {"calcs": ["sum"], "displayMode": "table", "placement": "right"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {"expr": "sum by (status) (rate(veritas_dataset_validations_total[5m]))", "legendFormat": "{{status}}", "refId": "A"}
+      ],
+      "title": "Dataset validation outcomes per second (5m)",
+      "type": "timeseries",
+      "fieldConfig": {"defaults": {"custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 1}, "unit": "short"}}
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 38,
+  "tags": ["veritas", "biomarkers", "ai", "fastapi"],
+  "templating": {
+    "list": [
+      {
+        "current": {"selected": false, "text": "Prometheus", "value": "Prometheus"},
+        "hide": 0,
+        "includeAll": false,
+        "label": "Prometheus",
+        "multi": false,
+        "name": "DS_PROMETHEUS",
+        "options": [],
+        "query": "prometheus",
+        "queryValue": "",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "datasource"
+      }
+    ]
+  },
+  "time": {"from": "now-6h", "to": "now"},
+  "timepicker": {},
+  "timezone": "",
+  "title": "Veritas — overview",
+  "uid": "veritas-overview",
+  "version": 1,
+  "weekStart": ""
+}
