@@ -300,6 +300,17 @@ export async function fetchPipelines(timeoutMs = 15000) {
   return { data: r.data ?? [] };
 }
 
+/**
+ * POST /api/v1/pipelines — register a new pipeline from a YAML definition.
+ * Admin-only on the backend; researchers get a clean 403 the UI surfaces.
+ */
+export async function registerPipeline({ name, title, image, modality, description, yaml_definition }, timeoutMs = 20000) {
+  const body = { name, title, image, modality };
+  if (description) body.description = description;
+  if (yaml_definition) body.yaml_definition = yaml_definition;
+  return apiFetch("/pipelines", { method: "POST", body, timeoutMs });
+}
+
 /* ───────────── hpc ───────────── */
 
 export async function fetchHpcSummary(timeoutMs = 15000) {

@@ -51,6 +51,7 @@ import {
   markAllNotificationsRead,
   markNotificationRead,
   previewSlurmJob,
+  registerPipeline,
   resetUserPassword,
   revokeApiToken,
   setUserRole,
@@ -529,6 +530,11 @@ export default function VeritasApp({ currentUser = null, onLogout = null } = {})
     entrypoint: "python /app/run.py --input /input --output /output",
     description: "Built from your Dockerfile, pushed to Docker Hub, then referenced here for Slurm jobs.",
   });
+  const [pipelineRegister, setPipelineRegister] = useState({
+    loading: false,
+    error: null,
+    success: null, // name of the just-registered pipeline, for the inline OK message
+  });
   const [hpcForm, setHpcForm] = useState(() => {
     const d = hpcConnectFormDefaults();
     const hasEnv = Boolean(d.hostname && d.username);
@@ -688,6 +694,43 @@ reports:
   - name: metrics_json
     type: json`;
   }, [pipelineDraft, pipelineTemplate]);
+
+  const submitPipelineRegistration = useCallback(async () => {
+    const draft = pipelineDraft;
+    // Basic client-side guard so the API doesn't get a malformed body.
+    if (!draft.name?.trim() || !draft.image?.trim()) {
+      setPipelineRegister({ loading: false, error: "Pipeline name and container image are required.", success: null });
+      return;
+    }
+    setPipelineRegister({ loading: true, error: null, success: null });
+    const res = await registerPipeline({
+      name: draft.name.trim(),
+      title: draft.title?.trim() || draft.name.trim(),
+      image: draft.image.trim(),
+      modality: draft.modality?.trim() || "MRI",
+      description: draft.description,
+      yaml_definition: pipelineYamlPreview,
+    });
+    if (res.ok) {
+      setPipelineRegister({ loading: false, error: null, success: draft.name.trim() });
+      // Refresh the live catalog so the new pipeline shows up immediately.
+      fetchPipelines().then((j) => {
+        if (j && Array.isArray(j.data)) setPipelinesLive(j.data);
+      });
+    } else if (res.status === 403) {
+      setPipelineRegister({
+        loading: false,
+        success: null,
+        error: "Only admins can register pipelines. Send the YAML below to a Veritas admin.",
+      });
+    } else {
+      setPipelineRegister({
+        loading: false,
+        success: null,
+        error: res.message || "Could not register pipeline.",
+      });
+    }
+  }, [pipelineDraft, pipelineYamlPreview]);
 
   const refreshHpcSummary = useCallback(async () => {
     if (!isVeritasApiConfigured()) return;
@@ -1548,6 +1591,36 @@ reports:
               </p>
               <div className="mt-5 rounded-2xl border p-4" style={{ borderColor: COLORS.line, backgroundColor: COLORS.soft }}>
                 <pre className="overflow-x-auto whitespace-pre-wrap text-sm leading-6 font-mono" style={{ color: COLORS.text }}>{pipelineYamlPreview}</pre>
+              </div>
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={submitPipelineRegistration}
+                  disabled={pipelineRegister.loading || !isVeritasApiConfigured()}
+                  data-testid="pipeline-register-button"
+                  className="rounded-full px-5 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                  style={{ backgroundColor: COLORS.navy }}
+                >
+                  {pipelineRegister.loading ? "Registering…" : "Register pipeline"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (typeof navigator !== "undefined" && navigator.clipboard) navigator.clipboard.writeText(pipelineYamlPreview);
+                  }}
+                  className="rounded-full border px-4 py-2 text-sm font-medium"
+                  style={{ borderColor: COLORS.line, color: COLORS.navy }}
+                >
+                  Copy YAML
+                </button>
+                {pipelineRegister.success && (
+                  <span className="text-sm font-medium" style={{ color: "#166534" }}>
+                    Registered <code className="rounded bg-emerald-50 px-1">{pipelineRegister.success}</code> in the catalog.
+                  </span>
+                )}
+                {pipelineRegister.error && (
+                  <span className="text-sm" style={{ color: "#991b1b" }} role="alert">{pipelineRegister.error}</span>
+                )}
               </div>
               {pipelinesLive && pipelinesLive.length > 0 ? (
                 <div className="mt-6">
