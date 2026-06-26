@@ -58,6 +58,55 @@ def auth_mode():
     return {"data": {"enabled": settings.auth_enabled, "mode": settings.auth_mode}}
 
 
+@router.get("/bootstrap-status")
+def bootstrap_status(db: Session = Depends(get_db)):
+    """Used by LoginGate to decide whether to show the first-admin form.
+
+    Reports `needs_bootstrap=true` only when auth is enabled AND no active
+    admin user exists in the DB. Once any admin is in place this flips to
+    false and stays false, so the bootstrap form can never be used to
+    overwrite an existing admin.
+    """
+    settings = get_settings()
+    if not settings.auth_enabled:
+        return {"data": {"needs_bootstrap": False, "auth_enabled": False}}
+    admin_count = db.query(User).filter(User.role == "admin", User.is_active.is_(True)).count()
+    return {"data": {"needs_bootstrap": admin_count == 0, "auth_enabled": True}}
+
+
+@router.post("/bootstrap-admin", response_model=TokenResponse)
+def bootstrap_admin(payload: RegisterRequest, db: Session = Depends(get_db)):
+    """One-shot creation of the first admin when the DB has none.
+
+    Refuses if auth is disabled (use AUTH_ENABLED=true), or if any active
+    admin already exists. Intended for use from the LoginGate's bootstrap
+    form right after `alembic upgrade head` on a fresh production DB —
+    saves an ops user from having to shell in and run
+    `veritas-api users create-admin`.
+    """
+    settings = get_settings()
+    if not settings.auth_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="AUTH_ENABLED is false; admins are not used in this deployment.",
+        )
+    admin_count = db.query(User).filter(User.role == "admin", User.is_active.is_(True)).count()
+    if admin_count > 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An admin already exists; use the regular login or admin endpoints.",
+        )
+    if not payload.password or len(payload.password) < 12:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password must be at least 12 characters.",
+        )
+    service = AuthService.build(db=db)
+    user = service.register_user(payload.email, payload.password, payload.full_name, role="admin")
+    token = service.create_access_token(subject=user.email, role=user.role, full_name=user.full_name)
+    return {"access_token": token, "token_type": "bearer", "user": user}
+
+
 # ───────── personal access tokens ─────────
 
 def _user_row(db: Session, current: CurrentUser) -> User:

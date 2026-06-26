@@ -1,8 +1,10 @@
 import React, { useCallback, useEffect, useState } from "react";
 
 import {
+  bootstrapAdmin,
   clearAuthToken,
   fetchAuthMode,
+  fetchBootstrapStatus,
   fetchCurrentUser,
   getAuthToken,
   login as apiLogin,
@@ -68,7 +70,7 @@ export default function LoginGate({ children }) {
   const [status, setStatus] = useState("checking"); // checking | ready | login
   const [authEnabled, setAuthEnabled] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
-  const [mode, setMode] = useState("login"); // login | register
+  const [mode, setMode] = useState("login"); // login | register | bootstrap
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
@@ -93,6 +95,12 @@ export default function LoginGate({ children }) {
       return;
     }
     if (!getAuthToken()) {
+      // Check whether the DB needs a first-admin. If yes, force the
+      // bootstrap form even before the user picks login/register.
+      const bs = await fetchBootstrapStatus();
+      if (bs.ok && bs.data?.needs_bootstrap) {
+        setMode("bootstrap");
+      }
       setStatus("login");
       return;
     }
@@ -119,15 +127,24 @@ export default function LoginGate({ children }) {
         setError("Email and password are required.");
         return;
       }
+      if (mode === "bootstrap" && password.length < 12) {
+        setError("Bootstrap admin password must be at least 12 characters.");
+        return;
+      }
       setSubmitting(true);
       setError(null);
-      const res =
-        mode === "login"
-          ? await apiLogin(email, password)
-          : await apiRegister(email, password, fullName);
+      let res;
+      if (mode === "login") res = await apiLogin(email, password);
+      else if (mode === "bootstrap") res = await bootstrapAdmin(email, password, fullName);
+      else res = await apiRegister(email, password, fullName);
       setSubmitting(false);
       if (!res.ok) {
-        setError(res.message || (mode === "login" ? "Login failed." : "Registration failed."));
+        const fallback = {
+          login: "Login failed.",
+          register: "Registration failed.",
+          bootstrap: "Could not bootstrap the first admin.",
+        }[mode];
+        setError(res.message || fallback);
         return;
       }
       const user = res.data?.user || null;
@@ -161,15 +178,37 @@ export default function LoginGate({ children }) {
       <div style={PAGE_STYLE}>
         <form style={PANEL_STYLE} onSubmit={submit}>
           <h1 style={{ fontSize: "1.4rem", fontWeight: 700, marginBottom: "0.25rem" }}>
-            {mode === "login" ? "Sign in to Veritas" : "Create your Veritas account"}
+            {mode === "login"
+              ? "Sign in to Veritas"
+              : mode === "bootstrap"
+                ? "Set up the first admin"
+                : "Create your Veritas account"}
           </h1>
           <p style={{ fontSize: "0.85rem", color: "#5e7394", marginBottom: "1.25rem" }}>
             {mode === "login"
               ? "Use the credentials provided by your Veritas administrator."
-              : "New accounts are created as researchers; admins are assigned by your administrator."}
+              : mode === "bootstrap"
+                ? "This Veritas deployment has no admins yet. Create the first one here — you'll be able to manage other users from inside the app afterwards."
+                : "New accounts are created as researchers; admins are assigned by your administrator."}
           </p>
+          {mode === "bootstrap" && (
+            <div
+              style={{
+                background: "#fffbeb",
+                color: "#92400e",
+                padding: "0.6rem 0.75rem",
+                borderRadius: "0.5rem",
+                fontSize: "0.8rem",
+                marginBottom: "0.75rem",
+                border: "1px solid #fde68a",
+              }}
+              role="status"
+            >
+              <strong>Heads up:</strong> the bootstrap form is only available when no admin exists yet. Once an admin is created, the form disappears and additional admins must be promoted by an existing admin.
+            </div>
+          )}
           <Field label="Email" type="email" value={email} onChange={setEmail} autoComplete="email" autoFocus />
-          {mode === "register" && (
+          {(mode === "register" || mode === "bootstrap") && (
             <Field label="Full name (optional)" value={fullName} onChange={setFullName} autoComplete="name" />
           )}
           <Field
@@ -208,10 +247,16 @@ export default function LoginGate({ children }) {
               cursor: submitting ? "wait" : "pointer",
             }}
           >
-            {submitting ? "Please wait…" : mode === "login" ? "Sign in" : "Create account"}
+            {submitting
+              ? "Please wait…"
+              : mode === "login"
+                ? "Sign in"
+                : mode === "bootstrap"
+                  ? "Create first admin"
+                  : "Create account"}
           </button>
           <div style={{ marginTop: "0.9rem", textAlign: "center", fontSize: "0.85rem" }}>
-            {mode === "login" ? (
+            {mode === "login" && (
               <button
                 type="button"
                 onClick={() => {
@@ -222,7 +267,8 @@ export default function LoginGate({ children }) {
               >
                 Need an account? Register
               </button>
-            ) : (
+            )}
+            {mode === "register" && (
               <button
                 type="button"
                 onClick={() => {
@@ -234,6 +280,8 @@ export default function LoginGate({ children }) {
                 Already have an account? Sign in
               </button>
             )}
+            {/* No toggle out of bootstrap — the page only shows bootstrap when
+                no admin exists, so any other choice would be a dead end. */}
           </div>
         </form>
       </div>

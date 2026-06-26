@@ -94,6 +94,28 @@ export async function fetchAuthMode(timeoutMs = 5000) {
 }
 
 /**
+ * GET /api/v1/auth/bootstrap-status — { needs_bootstrap, auth_enabled }.
+ * Tells LoginGate whether to render the first-admin form on a fresh prod DB.
+ */
+export async function fetchBootstrapStatus(timeoutMs = 5000) {
+  return apiFetch("/auth/bootstrap-status", { timeoutMs });
+}
+
+/**
+ * POST /api/v1/auth/bootstrap-admin — one-shot first-admin creation.
+ * Refuses if any admin already exists. Stores the JWT on success.
+ */
+export async function bootstrapAdmin(email, password, fullName, timeoutMs = 15000) {
+  const body = { email, password, full_name: fullName || null };
+  const r = await apiFetch("/auth/bootstrap-admin", { method: "POST", body, timeoutMs });
+  if (!r.ok) return r;
+  const payload = r.data || {};
+  const token = payload.access_token;
+  if (token) setAuthToken(token);
+  return { ok: true, data: payload };
+}
+
+/**
  * POST /api/v1/auth/login — returns { access_token, user }. Stores token on success.
  */
 export async function login(email, password, timeoutMs = 15000) {
