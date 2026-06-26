@@ -109,6 +109,20 @@ class Settings(BaseSettings):
     auth_default_dev_email: str = "dev@veritas.local"
     auth_default_dev_role: str = "admin"
 
+    # --- Email (notifications fan-out; best-effort, never blocks the DB write) ---
+    # Flip enabled=true to opt in. With it off, in-app bell notifications still fire.
+    email_enabled: bool = False
+    email_smtp_host: str = "localhost"
+    email_smtp_port: int = 25
+    email_smtp_username: str = ""
+    email_smtp_password: str = ""
+    email_smtp_use_tls: bool = False  # STARTTLS for ports 587 / 25
+    email_smtp_use_ssl: bool = False  # SMTPS for port 465
+    email_smtp_timeout_seconds: int = 15
+    email_from: str = "Veritas <noreply@veritas.local>"
+    # Appended to in-app `link_page` to form a usable absolute URL in emails.
+    email_app_base_url: str = "http://localhost:7000"
+
     # --- Atlas / Pennsieve ---
     atlas_api_base_url: str = "https://atlas.example.org/api/v1"
     atlas_api_client_id: str = "veritas"
