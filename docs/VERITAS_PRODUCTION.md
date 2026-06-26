@@ -13,6 +13,7 @@
 - **Production:** **`gunicorn`** with **`uvicorn.workers.UvicornWorker`** (see `backend/Dockerfile`). Override worker count: **`WEB_CONCURRENCY`**.
 - **Celery:** run **`./platform worker`** (or your process manager) with the **same** env as the API.
 - **Celery beat** (periodic job monitor sweep): `celery -A app.celery_app.celery_app beat`. Without beat, jobs only transition state when `POST /jobs/monitor/sweep` is called manually. Interval comes from `JOB_MONITOR_INTERVAL_SECONDS` (default 30s).
+- **Email notifications** (optional): set `EMAIL_ENABLED=true` plus `EMAIL_SMTP_HOST`, `EMAIL_SMTP_PORT`, `EMAIL_SMTP_USERNAME`, `EMAIL_SMTP_PASSWORD`, `EMAIL_SMTP_USE_TLS`/`EMAIL_SMTP_USE_SSL`, `EMAIL_FROM`, and `EMAIL_APP_BASE_URL` (used to build the "Open in Veritas" link inside emails). The in-app bell continues to work whether or not email is enabled; SMTP errors are logged at WARNING and swallowed, so a flaky relay never blocks a report-generation response.
 
 ## HTTP / security
 

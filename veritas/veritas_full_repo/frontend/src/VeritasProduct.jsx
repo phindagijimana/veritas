@@ -9,6 +9,7 @@ const PATH_BY_PAGE = {
   user: "/dashboard",
   pipeline: "/pipeline",
   leaderboard: "/leaderboard",
+  compare: "/compare",
   atlas_api: "/atlas/api",
   atlas_admin: "/atlas/admin",
   admin: "/admin",
@@ -41,6 +42,7 @@ import {
   fetchApiTokens,
   fetchAuditEvents,
   fetchEvaluationRequests,
+  fetchReportDetail,
   fetchHpcSummary,
   fetchJobLogs,
   fetchLeaderboard,
@@ -75,6 +77,7 @@ const NAV_ITEMS = [
   { id: "atlas_api", label: "Atlas API access" },
   { id: "atlas_admin", label: "Atlas admin" },
   { id: "admin", label: "Veritas admin" },
+  { id: "compare", label: "Compare runs" },
   { id: "tokens", label: "API tokens" },
   { id: "help", label: "Help" },
 ];
@@ -503,6 +506,16 @@ export default function VeritasApp({ currentUser = null, onLogout = null } = {})
   const [resetReveal, setResetReveal] = useState(null); // { email, password }
   const [auditEvents, setAuditEvents] = useState({ loading: false, error: null, items: null });
   const [auditFilter, setAuditFilter] = useState({ action: "", actor_email: "" });
+  const [compare, setCompare] = useState({
+    requestsLoading: false,
+    requestsError: null,
+    requests: [],
+    leftId: "",
+    rightId: "",
+    leftDetail: null,
+    rightDetail: null,
+    detailError: null,
+  });
   const [notifications, setNotifications] = useState({ items: [], unread: 0 });
   const [notifOpen, setNotifOpen] = useState(false);
   const [reportDownload, setReportDownload] = useState({ pending: null, error: null });
@@ -745,6 +758,47 @@ reports:
       cancelled = true;
     };
   }, [page]);
+
+  // Compare runs — load the request list when the page opens; load report
+  // detail for each side whenever the user picks a request id.
+  useEffect(() => {
+    if (page !== "compare" || !isVeritasApiConfigured()) return;
+    let cancelled = false;
+    (async () => {
+      setCompare((s) => ({ ...s, requestsLoading: true, requestsError: null }));
+      const res = await fetchEvaluationRequests();
+      if (cancelled) return;
+      if (res.ok) {
+        setCompare((s) => ({ ...s, requestsLoading: false, requestsError: null, requests: res.data }));
+      } else {
+        setCompare((s) => ({ ...s, requestsLoading: false, requestsError: res.message, requests: [] }));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [page]);
+
+  useEffect(() => {
+    if (page !== "compare" || !isVeritasApiConfigured()) return;
+    let cancelled = false;
+    (async () => {
+      const tasks = [];
+      if (compare.leftId) tasks.push(fetchReportDetail(compare.leftId).then((r) => ["left", r]));
+      else tasks.push(Promise.resolve(["left", null]));
+      if (compare.rightId) tasks.push(fetchReportDetail(compare.rightId).then((r) => ["right", r]));
+      else tasks.push(Promise.resolve(["right", null]));
+      const results = await Promise.all(tasks);
+      if (cancelled) return;
+      const next = { detailError: null };
+      for (const [side, res] of results) {
+        const key = side === "left" ? "leftDetail" : "rightDetail";
+        if (res == null) next[key] = null;
+        else if (res.ok) next[key] = res.data;
+        else { next[key] = null; next.detailError = res.message; }
+      }
+      setCompare((s) => ({ ...s, ...next }));
+    })();
+    return () => { cancelled = true; };
+  }, [page, compare.leftId, compare.rightId]);
 
   const reloadTokens = useCallback(async () => {
     setTokens({ loading: true, error: null, items: null });
@@ -1601,6 +1655,107 @@ reports:
                 </Card>
               ))}
             </div>
+          )}
+        </PageShell>
+      )}
+
+      {page === "compare" && (
+        <PageShell>
+          <SectionTitle title="Compare runs" subtitle="Pick any two evaluation requests to see their pipeline, dataset, phase, and report side by side. Useful when iterating on a pipeline against the same dataset." />
+
+          {compare.requestsLoading && <Card className="p-6 text-sm" style={{ color: COLORS.muted }}>Loading requests…</Card>}
+          {!compare.requestsLoading && compare.requestsError && (
+            <Card className="p-6 text-sm" style={{ color: "#991b1b", backgroundColor: "#fef2f2" }}>
+              Could not load requests: {compare.requestsError}
+            </Card>
+          )}
+          {!compare.requestsLoading && !compare.requestsError && compare.requests.length === 0 && (
+            <Card className="p-6 text-sm" style={{ color: COLORS.muted }}>
+              No evaluation requests yet. Submit one from the User Dashboard, wait for it to reach Reporting, then come back here to compare it with another run.
+            </Card>
+          )}
+
+          {!compare.requestsLoading && !compare.requestsError && compare.requests.length > 0 && (
+            <>
+              {compare.detailError && (
+                <Card className="mb-4 p-4 text-sm" style={{ color: "#991b1b", backgroundColor: "#fef2f2" }}>
+                  {compare.detailError}
+                </Card>
+              )}
+              <div className="grid gap-5 lg:grid-cols-2">
+                {[
+                  { side: "left", label: "Left", value: compare.leftId, detail: compare.leftDetail, set: (v) => setCompare((s) => ({ ...s, leftId: v })) },
+                  { side: "right", label: "Right", value: compare.rightId, detail: compare.rightDetail, set: (v) => setCompare((s) => ({ ...s, rightId: v })) },
+                ].map((col) => {
+                  const req = col.value ? compare.requests.find((r) => String(r.id) === String(col.value)) : null;
+                  const rd = col.detail;
+                  return (
+                    <Card key={col.side} className="overflow-hidden">
+                      <div className="border-b px-5 py-4" style={{ borderColor: COLORS.line }}>
+                        <label className="text-xs font-semibold uppercase tracking-wide" style={{ color: COLORS.muted }} htmlFor={`compare-${col.side}`}>{col.label}</label>
+                        <select
+                          id={`compare-${col.side}`}
+                          data-testid={`compare-select-${col.side}`}
+                          value={col.value}
+                          onChange={(e) => col.set(e.target.value)}
+                          className="mt-2 w-full rounded-xl border bg-white px-3 py-2 text-sm outline-none"
+                          style={{ borderColor: COLORS.line, color: COLORS.text }}
+                        >
+                          <option value="">— Select a request —</option>
+                          {compare.requests.map((r) => (
+                            <option key={r.id} value={r.id}>
+                              {r.id} · {r.pipeline} · {(r.datasets || []).join(", ") || (r.dataset_ids || []).join(", ")} · {r.current_phase}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="p-5 space-y-3 text-sm">
+                        {!col.value && (
+                          <p style={{ color: COLORS.muted }}>Select a request above to see its details.</p>
+                        )}
+                        {col.value && (
+                          <>
+                            <div className="grid grid-cols-2 gap-y-2">
+                              <span style={{ color: COLORS.muted }}>Request</span><span className="font-mono text-xs" style={{ color: COLORS.text }}>{req?.id}</span>
+                              <span style={{ color: COLORS.muted }}>Pipeline</span><span style={{ color: COLORS.text }}>{req?.pipeline}</span>
+                              <span style={{ color: COLORS.muted }}>Dataset(s)</span><span style={{ color: COLORS.text }}>{(req?.datasets || []).join(", ") || (req?.dataset_ids || []).join(", ") || "—"}</span>
+                              <span style={{ color: COLORS.muted }}>Phase</span><span style={{ color: COLORS.text }}>{req?.current_phase}</span>
+                              <span style={{ color: COLORS.muted }}>Report</span><span style={{ color: COLORS.text }}>{rd?.status || req?.report_status || "—"}</span>
+                              <span style={{ color: COLORS.muted }}>Submitted by</span><span style={{ color: COLORS.text }}>{req?.submitted_by || "—"}</span>
+                            </div>
+                            {/* Metrics summary (if the report has one) */}
+                            {rd?.metrics_summary_json && (
+                              <div className="rounded-xl border p-3" style={{ borderColor: COLORS.line, backgroundColor: COLORS.soft }}>
+                                <div className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: COLORS.muted }}>Metrics</div>
+                                <pre className="overflow-x-auto text-xs" style={{ color: COLORS.text }}>
+{typeof rd.metrics_summary_json === "string" ? rd.metrics_summary_json : JSON.stringify(rd.metrics_summary_json, null, 2)}
+                                </pre>
+                              </div>
+                            )}
+                            {/* Download buttons (when report exists on disk) */}
+                            {rd?.id && (
+                              <div className="flex flex-wrap gap-2 pt-1">
+                                {["pdf", "json", "csv"].map((fmt) => (
+                                  <button
+                                    key={fmt}
+                                    type="button"
+                                    onClick={() => downloadReportFile(req?.id, fmt)}
+                                    className="rounded-full border px-3 py-1 text-xs font-medium"
+                                    style={{ borderColor: COLORS.line, color: COLORS.navy }}
+                                  >
+                                    Download {fmt.toUpperCase()}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </Card>
+                  );
+                })}
+              </div>
+            </>
           )}
         </PageShell>
       )}
