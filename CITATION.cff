@@ -1,0 +1,45 @@
+cff-version: 1.2.0
+title: "Veritas & Atlas Data API"
+message: >-
+  If you use Veritas or Atlas in published work, please cite this software.
+type: software
+authors:
+  - family-names: Ndagijimana
+    given-names: Philbert
+    email: philbert_ndagijimana@urmc.rochester.edu
+    affiliation: University of Rochester Medical Center
+abstract: >-
+  Veritas is a clinical AI biomarker validation platform: it exposes a
+  pipeline catalog, an HPC (Slurm/Apptainer) submission path, an evaluation
+  state machine, on-disk report artifacts (PDF/JSON/CSV/HTML/run-manifest),
+  an append-only audit log, in-app + email notifications, a per-disease
+  leaderboard, and an admin surface for users, audit, and dataset
+  governance. Atlas is the dataset access layer that backs Veritas with
+  dataset metadata, staging requests, grants, and Pennsieve integration.
+  Together they target reproducible biomarker evaluation against curated
+  clinical datasets (e.g. IDEAS for epilepsy) with a per-request, signed
+  audit trail.
+keywords:
+  - clinical AI
+  - biomarker validation
+  - reproducibility
+  - HPC
+  - Slurm
+  - MELD Graph
+  - epilepsy
+  - neuroimaging
+  - FastAPI
+  - clinical informatics
+license: MIT
+repository-code: "https://github.com/phindagijimana/veritas"
+url: "https://github.com/phindagijimana/veritas"
+version: "0.1.0"
+date-released: "2026-06-26"
+preferred-citation:
+  type: software
+  title: "Veritas & Atlas Data API: reproducible clinical AI biomarker evaluation"
+  authors:
+    - family-names: Ndagijimana
+      given-names: Philbert
+  year: 2026
+  url: "https://github.com/phindagijimana/veritas"

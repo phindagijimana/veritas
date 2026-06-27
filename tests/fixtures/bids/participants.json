@@ -1,0 +1,17 @@
+{
+  "participant_id": {
+    "Description": "Unique participant identifier (synthetic)."
+  },
+  "age": {
+    "Description": "Age in years at the time of the (synthetic) scan.",
+    "Units": "years"
+  },
+  "sex": {
+    "Description": "Self-reported sex.",
+    "Levels": {"M": "male", "F": "female"}
+  },
+  "group": {
+    "Description": "Cohort label.",
+    "Levels": {"control": "no clinical finding"}
+  }
+}

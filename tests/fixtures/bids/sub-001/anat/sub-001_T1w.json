@@ -1,0 +1,10 @@
+{
+  "Manufacturer": "Synthetic",
+  "ManufacturersModelName": "Veritas-Smoke-1",
+  "MagneticFieldStrength": 3,
+  "RepetitionTime": 2.3,
+  "EchoTime": 0.0023,
+  "FlipAngle": 8,
+  "VoxelSize": [1.0, 1.0, 1.0],
+  "Notes": "Voxels are uniform zeros. This file exists only so a BIDS validator does not reject the layout. Do not use for analysis."
+}

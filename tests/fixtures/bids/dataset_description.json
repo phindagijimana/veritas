@@ -1,0 +1,14 @@
+{
+  "Name": "Veritas synthetic BIDS smoke fixture",
+  "BIDSVersion": "1.8.0",
+  "DatasetType": "raw",
+  "License": "MIT",
+  "Authors": [
+    "Veritas / Atlas contributors"
+  ],
+  "Acknowledgements": "Synthetic, zero-real-data placeholder used only for JOSS-style end-to-end smoke tests. Do not use for any actual neuroimaging analysis.",
+  "HowToAcknowledge": "Not a real dataset.",
+  "Funding": [],
+  "ReferencesAndLinks": [],
+  "DatasetDOI": ""
+}
