@@ -1,0 +1,40 @@
+# Overlay that fronts the existing prod stack with a Caddy reverse proxy
+# providing automatic Let's Encrypt TLS.
+#
+# Use:
+#   docker compose \
+#     -f docker-compose.prod.yml \
+#     -f ../../../deploy/public/docker-compose.public.yml \
+#     up -d
+#
+# Env required (export before `docker compose up`):
+#   VERITAS_HOSTNAME   e.g. veritas.example.com
+#   VERITAS_LE_EMAIL   e.g. ops@example.com  (Let's Encrypt account contact)
+
+services:
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    environment:
+      - VERITAS_HOSTNAME=${VERITAS_HOSTNAME:?set VERITAS_HOSTNAME=<your fqdn>}
+      - VERITAS_LE_EMAIL=${VERITAS_LE_EMAIL:?set VERITAS_LE_EMAIL=<acme contact>}
+    volumes:
+      - ../../../deploy/public/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      nginx:
+        condition: service_healthy
+
+  # Nginx is no longer the edge — Caddy fronts it. We leave nginx's host
+  # port binding in place; the cloud-init firewall (ufw 22/80/443 only)
+  # is what prevents it from being publicly reachable. Operators using a
+  # different firewall posture can override the binding here.
+
+volumes:
+  caddy_data:
+  caddy_config:

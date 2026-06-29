@@ -1,0 +1,32 @@
+# Caddyfile — public TLS termination for Veritas.
+# Caddy fetches and renews a Let's Encrypt certificate automatically.
+
+{
+    email {$VERITAS_LE_EMAIL}
+}
+
+{$VERITAS_HOSTNAME} {
+    encode gzip zstd
+
+    # All API + UI traffic is proxied to the nginx service in the compose
+    # network. Nginx serves the built UI from / and proxies /api to the
+    # backend. We trust nginx to forward correctly.
+    reverse_proxy nginx:7000 {
+        header_up X-Forwarded-Proto https
+        header_up X-Forwarded-Host {host}
+        header_up X-Real-IP {remote_host}
+    }
+
+    header {
+        # HSTS: 6 months, includeSubDomains. Drop preload until you're
+        # certain you want the apex on the HSTS preload list.
+        Strict-Transport-Security "max-age=15552000; includeSubDomains"
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy strict-origin-when-cross-origin
+        # Permissions-Policy: disable the camera/microphone/geolocation
+        # surfaces the UI does not use. Adjust if you add new features.
+        Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+        -Server
+    }
+}
