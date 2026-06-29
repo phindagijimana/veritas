@@ -79,11 +79,30 @@ dev box clears.**
 
 ## Run #2 — Postgres, gunicorn 4 workers, 100 concurrent users *(pending)*
 
-This baseline was held over to a later run because rootless podman on
-the URMC dev box hits the documented subuid issue (see
-`docs/MELD_VERITAS_ATLAS.md` "Podman / rootless"), and a managed
-Postgres / RDS instance isn't reachable from this network. The exact
-command to populate this section once Postgres + gunicorn are in place:
+This baseline is still pending. Retried on 2026-06-29:
+
+```
+$ podman run --rm -d --name veritas-pg-test \
+    -e POSTGRES_USER=veritas -e POSTGRES_PASSWORD=veritas \
+    -e POSTGRES_DB=veritas_loadtest -p 5434:5432 \
+    docker.io/library/postgres:15-alpine
+Error: potentially insufficient UIDs or GIDs available in user namespace
+(requested 0:42 for /etc/shadow): Check /etc/subuid and /etc/subgid if
+configured locally and run "podman system migrate"
+```
+
+The unblock is one-time and ops-side. Run, with sudo:
+
+```bash
+sudo ./scripts/fix_podman_rootless_subuid.sh
+podman system migrate
+```
+
+The script appends a 165536:65536 range for this user to `/etc/subuid`
+and `/etc/subgid`. After that, the `postgres:15-alpine` image pulls
+cleanly and the benchmark below can run. Until that fix lands, this
+section is a known blocker, not a missing benchmark. The exact command
+to populate this section once Postgres + gunicorn are in place:
 
 ```bash
 # Terminal 1: real Postgres + 4 workers

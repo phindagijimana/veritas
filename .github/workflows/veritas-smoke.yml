@@ -1,0 +1,97 @@
+name: Veritas smoke
+
+on:
+  push:
+    paths:
+      - "veritas/veritas_full_repo/backend/**"
+      - "scripts/**"
+      - ".github/workflows/veritas-smoke.yml"
+  pull_request:
+    paths:
+      - "veritas/veritas_full_repo/backend/**"
+      - "scripts/**"
+      - ".github/workflows/veritas-smoke.yml"
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: veritas/veritas_full_repo/backend
+
+    env:
+      APP_ENV: development
+      HPC_MODE: mock
+      AUTH_ENABLED: "true"
+      AUTH_SECRET_KEY: smoke-secret-do-not-use-in-prod-smoke-secret-do-not-use
+      DATABASE_URL: "sqlite+pysqlite:///./var/smoke.db"
+      DATABASE_AUTO_CREATE_SCHEMA: "true"
+      SEED_DEMO_DATA_ON_STARTUP: "true"
+      JOB_QUEUE_ENABLED: "false"
+      PROMETHEUS_ENABLED: "true"
+      ATLAS_INTEGRATION_MODE: mock
+      PYTHONUNBUFFERED: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: veritas/veritas_full_repo/backend/pyproject.toml
+
+      - name: Install backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Pytest — fast subset (no Slurm, no SMTP, no Postgres)
+        run: |
+          python -m pytest tests/ -q --tb=short \
+            -k "not slurm and not postgres and not smtp_live"
+
+      - name: Boot API in background
+        run: |
+          mkdir -p var
+          nohup python -m app serve --host 127.0.0.1 --port 6000 \
+            > var/smoke-api.log 2>&1 &
+          echo $! > var/smoke-api.pid
+
+      - name: Wait for /health
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:6000/health > /dev/null; then
+              echo "API up"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "API never came up — last log lines:"
+          tail -60 var/smoke-api.log
+          exit 1
+
+      - name: Curl smoke (health, ready, openapi, pipelines, datasets)
+        run: |
+          set -e
+          curl -fsS http://127.0.0.1:6000/health     | head -c 200
+          echo
+          curl -fsS http://127.0.0.1:6000/ready      | head -c 200
+          echo
+          curl -fsS http://127.0.0.1:6000/openapi.json > /dev/null
+          curl -fsS http://127.0.0.1:6000/api/v1/pipelines | head -c 400
+          echo
+          curl -fsS http://127.0.0.1:6000/api/v1/datasets  | head -c 400
+          echo
+
+      - name: Tear down
+        if: always()
+        run: |
+          if [ -f var/smoke-api.pid ]; then
+            kill "$(cat var/smoke-api.pid)" 2>/dev/null || true
+          fi
+          if [ -f var/smoke-api.log ]; then
+            echo "===== last 80 lines of smoke-api.log ====="
+            tail -80 var/smoke-api.log
+          fi
