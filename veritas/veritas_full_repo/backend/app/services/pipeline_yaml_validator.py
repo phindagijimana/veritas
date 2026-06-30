@@ -179,9 +179,14 @@ class PipelineYamlValidator:
             urls.append(f'https://{registry}/v2/{repository}/manifests/{tag}')
 
         for url in urls:
+            # Defense-in-depth against bandit B310 / SSRF: the URLs above are
+            # constructed with an https:// prefix, but enforce the scheme
+            # explicitly so a future code path can't smuggle file:// / ftp://.
+            if not url.lower().startswith('https://'):
+                return False, f'Refusing to validate non-HTTPS registry URL: {url}'
             try:
                 request = Request(url, headers={'Accept': 'application/vnd.oci.image.manifest.v1+json'})
-                with urlopen(request, timeout=timeout) as response:
+                with urlopen(request, timeout=timeout) as response:  # nosec B310 - https-only scheme enforced above
                     if 200 <= response.status < 300:
                         return True, f'Registry responded with HTTP {response.status}.'
             except HTTPError as exc:

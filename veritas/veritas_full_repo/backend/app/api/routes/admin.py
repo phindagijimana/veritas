@@ -4,12 +4,15 @@ import csv
 import io
 import json
 import secrets
+import time
 from typing import List, Optional
 
+import requests
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.passwords import hash_password
 from app.core.security import get_current_user, require_admin
 from app.db.session import get_db
@@ -252,4 +255,93 @@ def admin_export_audit_events(
         content=buf.getvalue(),
         media_type="text/csv",
         headers={"Content-Disposition": 'attachment; filename="veritas-audit.csv"'},
+    )
+
+
+class IntegrationHealth(BaseModel):
+    integration: str
+    mode: str
+    ok: bool
+    detail: str
+    elapsed_ms: int
+
+
+@router.get("/integrations/pennsieve/health", response_model=IntegrationHealth)
+def admin_pennsieve_health(_=Depends(require_admin)) -> IntegrationHealth:
+    """Verify the Pennsieve integration is wired correctly without staging a dataset.
+
+    In mock mode this returns ok=True with mode=mock — no outbound call.
+    In live mode it issues a single authenticated GET against the configured
+    Pennsieve base URL and reports whether the credential was accepted.
+    Used by operators to confirm a token works before scheduling a real run.
+    """
+    s = get_settings()
+    started = time.monotonic()
+
+    if s.atlas_integration_mode != "live":
+        return IntegrationHealth(
+            integration="pennsieve",
+            mode=s.atlas_integration_mode,
+            ok=True,
+            detail="ATLAS_INTEGRATION_MODE is not 'live'; no outbound call attempted.",
+            elapsed_ms=int((time.monotonic() - started) * 1000),
+        )
+
+    if not (s.pennsieve_api_token or "").strip():
+        return IntegrationHealth(
+            integration="pennsieve",
+            mode=s.atlas_integration_mode,
+            ok=False,
+            detail="PENNSIEVE_API_TOKEN is empty; set it in the production env.",
+            elapsed_ms=int((time.monotonic() - started) * 1000),
+        )
+
+    base = (s.pennsieve_base_url or "").rstrip("/")
+    if not base.lower().startswith("https://"):
+        return IntegrationHealth(
+            integration="pennsieve",
+            mode=s.atlas_integration_mode,
+            ok=False,
+            detail=f"PENNSIEVE_BASE_URL must be https://; got {base!r}.",
+            elapsed_ms=int((time.monotonic() - started) * 1000),
+        )
+
+    try:
+        resp = requests.get(
+            f"{base}/user",
+            headers={"Authorization": f"Bearer {s.pennsieve_api_token}", "Accept": "application/json"},
+            timeout=min(s.pennsieve_timeout_seconds, 10),
+        )
+    except requests.RequestException as exc:
+        return IntegrationHealth(
+            integration="pennsieve",
+            mode=s.atlas_integration_mode,
+            ok=False,
+            detail=f"Network error reaching Pennsieve: {exc}",
+            elapsed_ms=int((time.monotonic() - started) * 1000),
+        )
+
+    elapsed = int((time.monotonic() - started) * 1000)
+    if 200 <= resp.status_code < 300:
+        return IntegrationHealth(
+            integration="pennsieve",
+            mode=s.atlas_integration_mode,
+            ok=True,
+            detail=f"Pennsieve responded {resp.status_code}.",
+            elapsed_ms=elapsed,
+        )
+    if resp.status_code in (401, 403):
+        return IntegrationHealth(
+            integration="pennsieve",
+            mode=s.atlas_integration_mode,
+            ok=False,
+            detail=f"Pennsieve rejected the token (HTTP {resp.status_code}); rotate PENNSIEVE_API_TOKEN.",
+            elapsed_ms=elapsed,
+        )
+    return IntegrationHealth(
+        integration="pennsieve",
+        mode=s.atlas_integration_mode,
+        ok=False,
+        detail=f"Pennsieve returned HTTP {resp.status_code}.",
+        elapsed_ms=elapsed,
     )
